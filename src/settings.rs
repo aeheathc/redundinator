@@ -312,7 +312,8 @@ impl SettingDefinition
     #Examples
     ```
     use redundinator::settings::*;
-    let set1 = SettingDefinition{category: "startup",  name: "working_dir", cli_short: "w", cli_long: "working_dir",       environment_variable: "REDUNDINATOR_WORKING_DIR",       value: SettingValue::ValString("data"),          description: "Working directory. Will look here for the folders config,logs -- particularly the config file in config/config.toml which will be created if it doesn't exist."};
+    let set1 = SettingDefinition{category: "startup",  name: "working_dir", cli_short: "w", cli_long: "working_dir",       environment_variable: "APPNAME_WORKING_DIR", value: SettingValue::ValString("data"),  description: "Working directory. Will look here for the folders config,logs -- particularly the config file in config/config.toml which will be created if it doesn't exist."};
+    let set2 = SettingDefinition{category: "startup",  name: "port",        cli_short: "p", cli_long: "port",              environment_variable: "APPNAME_PORT",        value: SettingValue::ValInt(3306),       description: "Port to listen on"};
     let toml1 = set1.to_toml();
     let toml2 = set2.to_toml();
     assert_eq!(toml1, "working_dir=\"data\"");

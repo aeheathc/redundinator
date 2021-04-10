@@ -13,6 +13,7 @@ pub mod mysql;
 pub mod resources;
 pub mod rsync;
 pub mod settings;
+pub mod shell;
 pub mod upload;
 
 use crate::settings::SETTINGS;

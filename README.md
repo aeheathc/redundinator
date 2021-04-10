@@ -4,6 +4,8 @@ Backup program intended for backing up the files of a Linux server, and multiple
 - Exports stored backups to a compressed, size-split format suitable for cloud upload (tar+zstd|split)
 - Uploads to a selection of cloud providers
 
+If backing up Windows clients with Redundinator, I recommend using backuppc/cygwin-rsyncd
+
 # Interface
 - Provides a command line utility `redundinator-manual` for firing off tasks
 - Provides a web interface `redundinator-web` for monitoring the status
@@ -19,9 +21,8 @@ Backup program intended for backing up the files of a Linux server, and multiple
 - odeke-em/drive (when using Google Drive upload)
 
 # Todo
-- Fix google drive upload -- "drive push" commands that work manually don't work when run via run_script because something is different about the environment and it doesn't detect that the gdrive managed folder was already initialized.
 - Support database dumping on remotes, not just localhost
 - Support multiple backup configurations for the same hostname so different data can synced with differing regularity
-- Transition some things from shell comands to API calls to reduce runtime environmental dependencies
+- Transition some things from shell comands to API calls to reduce runtime environmental dependencies and make it less linux-centric
 - Create a daemon to make things more automated
-- Add an encryption step to the export
+- Add an optional encryption step to the export

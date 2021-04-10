@@ -1,133 +1,82 @@
-use log::{error, warn, info/*, debug, trace, log, Level*/};
+use log::{error, /*warn,*/ info/*, debug, trace, log, Level*/};
 use run_script::{ScriptOptions, types::IoOptions};
-use std::env;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
 use crate::settings::Host;
 use crate::settings::SETTINGS;
+use crate::shell::shell_and_log;
 use crate::upload::list_files;
 use crate::upload::dir_symlink;
 
 pub fn gdrive_up(host: &Host)
 {
     info!("Starting Google Drive upload of exports for host: {}", host.hostname);
-    let dest = &SETTINGS.gdrive.dest_path;
     let managed = &SETTINGS.gdrive.managed_dir;
+    let dest = &SETTINGS.gdrive.dest_path;
 
-    let abs_working_dir = match env::current_dir()
+    //create dest_path if it doesn't exist
+    let dest_abs = format!("{}/{}", managed, dest);
+    if let Err(e) = fs::create_dir_all(&dest_abs)
     {
-        Ok(d) => d,
-        Err(e) => {
-            error!("Couldn't determine cwd, skipping gdrive upload: {}", e);
-            return;
-        }
-    };
-
-    //cwd to managed folder. On failure, just bail. User has to set it up.
-    if let Err(e) = env::set_current_dir(Path::new(managed))
-    {
-        error!("Couldn't cd into gdrive managed directory: {} Error: {} -- You need to (1) ensure this is the right dir, otherwise change the config (2) make this dir, (3) run `drive init` in it to connect it to google drive, AND (4) run redundinator under a user with permission to the dir",
-            managed,
-            e
-        );
+        error!("Couldn't ensure existence of destination inside gdrive managed directory: {} Error: {}", dest_abs, e);
         return;
     }
 
-    //create dest_path if it doesn't exist, and cwd into it
-    if let Err(e) = fs::create_dir_all(dest)
-    {
-        error!("Couldn't ensure existence of destination inside gdrive managed directory: {} Error: {}", dest, e);
-        return;
-    }
-    if let Err(e) = env::set_current_dir(Path::new(dest))
-    {
-        error!("Couldn't cd into dest folder: {} Error: {}", dest, e);
-        return;
-    }
-
-    //create symlink to exports/hosts folder if it doesn't exist, and cwd into it
+    //create symlink to exports/hosts folder
     let symlink_name = "redundinator";
-    if !dir_symlink(&SETTINGS.startup.export_path, symlink_name)
+    let symlink_abs = format!("{}/{}", dest_abs, symlink_name);
+    if !dir_symlink(&SETTINGS.startup.export_path, &symlink_abs) && !Path::new(&symlink_abs).exists()
     {
-        warn!("Couldn't create symlink from gdrive dest to exports folder, probably because it already exists. Continuing.");
-    }
-    if let Err(e) = env::set_current_dir(Path::new(symlink_name))
-    {
-        error!("Couldn't cd into symmlink: {} Error: {}", symlink_name, e);
+        error!("Failed to create symlink from gdrive dest to exports folder, but found that it doesn't already exist, skipping gdrive upload for this host");
         return;
     }
 
-    //run `drive push` followed by all of the pathless filenames to upload.
-    let cmd = format!("drive push {}",
-        list_files(host).iter().map(|f| {
-            match Path::new(f).file_name()
-            {
-                Some(s) => match s.to_str() {Some(st)=>st,None=>f},
-                None => f
-            }
-        }).collect::<Vec<&str>>().join(" ")
-    );
-    info!(target: "cmdlog", "{}", cmd);
-    //todo: set command-only working dir based on pathbuf and eliminate all the change_dir calls
-    //let path: PathBuf = [r"C:\", "windows", "system32.dll"].iter().collect();
-
-    /*let cmd_options = ScriptOptions{
+    let cmd_path: PathBuf = [managed].iter().collect();
+    let cmd_options = ScriptOptions{
         runner: Some("/bin/bash".to_string()),
-        working_directory: Some(".".to_string()),
+        working_directory: Some(cmd_path),
         input_redirection: IoOptions::Inherit,
         output_redirection: IoOptions::Pipe,
         exit_on_error: false,
         print_commands: false
-    };*/
-    match run_script::run(&cmd, &Vec::new(), &ScriptOptions::new())
+    };
+    let dest_with_sym = format!("{}/{}", dest, symlink_name);
+
+    //check for folder on gdrive side.
+    //The usual rustic approach doesn't work here: if we just try to create a folder that already exists, it will silently create a duplicate (yes, with the exact same name!)
+    let cmd_check_remote_folder = format!("drive stat -depth 0 {}", dest_with_sym);
+    if shell_and_log(cmd_check_remote_folder, &cmd_options, "Google Drive folder check", host, false) != Some(0)
     {
-        Ok(v) => {
-            let (code, stdout, stderr) = v;
-            if code != 0
-            {
-                error!("Google Drive upload returned nonzero exit code! Host: {} -- Full Command: {} -- Exit Code: {} -- see log folder for stdout and stderr output",
-                    host.hostname,
-                    cmd,
-                    code,
-                );
-                info!(target: "stdoutlog", "Full Command: {} -- Exit Code: {} -- stdout: {}",
-                    cmd,
-                    code,
-                    stdout
-                );
-                info!(target: "stderrlog", "Full Command: {} -- Exit Code: {} -- stderr: {}",
-                    cmd,
-                    code,
-                    stderr
-                );
-            }else{
-                info!("Successfully uploaded to Google Drive, files for host: {}", host.hostname);
-            }
-        },
-        Err(e) => {
-            error!("Failed to run Google Drive upload! Host: {} -- Error: {}", host.hostname, e);
-        }
+        //create folder on gdrive side
+        let cmd_folder = format!("drive new -folder {}", dest_with_sym);
+        shell_and_log(cmd_folder, &cmd_options, "Google Drive folder creation", host, true);
     }
 
-    //cwd back to normal working dir
-    if let Err(e) = env::set_current_dir(Path::new(&abs_working_dir))
-    {
-        let err = format!("Couldn't cd back to main working dir! Error: {}", e);
-        error!("{}", err);
-        panic!(err);
-    }
-    
+    //adjust filenames to be relative to where the command is being executed, then push files
+    let cmd_push = format!("drive push -no-prompt {}",
+        list_files(host).iter().map(|f| {
+            format!(
+                "{}/{}",
+                dest_with_sym,
+                match Path::new(f).file_name()
+                {
+                    Some(s) => match s.to_str() {Some(st)=>st,None=>f},
+                    None => f
+                }
+            )
+        }).collect::<Vec<String>>().join(" ")
+    );
+    shell_and_log(cmd_push, &cmd_options, "Upload files to Google Drive", host, true);
+
     info!("Finished gdrive_up for host: {}", host.hostname);
 }
 
 /*
-Crate google_drive
+Crate google_drive -- abandoned WIP code
 Why it won't work: It authenticates fine but at the command "list drives" the crate spews raw errors from the Google API
 talking about invalid values for a parameter the crate does not expose, so I assume the crate is just bugged.
-
-It also requires the caller to use a specific outdated version of Tokio (and in turn yup-oauth2)
 
 google-drive = "0.1.12"
 yup-oauth2 = "4"
@@ -203,7 +152,7 @@ pub fn gdrive_up(host: &Host, drive: &google_drive::Drive)
 */
 
 /*
-Crate google-drive3
+Crate google-drive3 -- abandoned WIP code
 Why it won't work: the crate requires the caller to use ancient versions of several other crates,
 including yup-oauth2 where that version doesn't have the function (read_service_account_key)
 capable of reading the current format of creds file produced by Google.
