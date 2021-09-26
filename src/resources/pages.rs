@@ -17,13 +17,13 @@ HttpResponse containing the main page
 */
 pub async fn index() -> HttpResponse
 {
-    let set_str = match serde_json::to_string_pretty(&json!(&SETTINGS.hosts)){
+    let set_str = match serde_json::to_string_pretty(&json!(&SETTINGS.sources)){
         Ok(v) => v, Err(_) => "error".to_string()
     };
 
     let cmdo = vec!(
         "ps aux|grep redundinator",
-        &format!("du -h --max-depth=1 {}/hosts", &SETTINGS.startup.storage_path)
+        &format!("du -h --max-depth=1 {}/sources", &SETTINGS.startup.storage_path)
     ).iter().map(|cmd| show_command(cmd)).collect::<Vec<String>>().join(""); 
 
 
@@ -43,7 +43,7 @@ fn show_command(cmd: &str) -> String
         Ok(v) => format!("{}<br/>{}", v.1, v.2),
         Err(e) => format!("Error: {}", e)
     };
-    format!("<fieldset><legend>ps aux|grep redundinator</legend><pre>{}</pre></fieldset>", cmdo)
+    format!("<fieldset><legend>{}</legend><pre>{}</pre></fieldset>", cmd, cmdo)
 }
 
 /**

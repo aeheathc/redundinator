@@ -1,37 +1,38 @@
 use log::{error, /*warn, */info/*, debug, trace, log, Level*/};
+use std::collections::HashMap;
 
 use crate::upload::{dropbox::dropbox_up, gdrive::gdrive_up};
 use crate::export::{export, unexport};
 use crate::mysql;
 use crate::rsync::sync;
-use crate::settings::Host;
+use crate::settings::Source;
 use crate::settings::SETTINGS;
 
 pub fn dispatch()
 {
-    let hosts: Vec<Host> = if &SETTINGS.action.host == ""
+    let sources: HashMap<String,Source> = if &SETTINGS.action.source == ""
     {
-        SETTINGS.hosts.clone()
+        SETTINGS.sources.clone()
     }else{
-        match get_matching_host(&SETTINGS.action.host)
+        match &SETTINGS.sources.get(&SETTINGS.action.source)
         {
-            Some(h) => vec!(h),
+            Some(h) => vec![(SETTINGS.action.source.clone(),(*h).clone())].into_iter().collect(),
             None => {
-                let hosts_list = SETTINGS.hosts.iter().map(|h| h.hostname.clone()).collect::<Vec<String>>().join(",");
-                error!("active host {} not found in hosts list ({})", &SETTINGS.action.host, hosts_list);
+                let sources_list = SETTINGS.sources.keys().cloned().collect::<Vec<String>>().join(",");
+                error!("active source {} not found in sources list ({})", &SETTINGS.action.source, sources_list);
                 return;
             }
         }
     };
 
-    let hosts_list = hosts.iter().map(|h| h.hostname.clone()).collect::<Vec<String>>().join(",");
+    let sources_list = sources.keys().cloned().collect::<Vec<String>>().join(",");
 
     if SETTINGS.action.sync
     {
-        info!("Running sync for hosts: {}", hosts_list);
-        for host in &hosts
+        info!("Running sync for hosts: {}", sources_list);
+        for source in &sources
         {
-            sync(host);
+            sync(source);
         }
     }
 
@@ -43,50 +44,46 @@ pub fn dispatch()
 
     if SETTINGS.action.export
     {
-        info!("Running export for hosts: {}", hosts_list);
-        for host in &hosts
+        info!("Running export for hosts: {}", sources_list);
+        for source in &sources
         {
-            export(host);
+            let (name, _) = source;
+            export(name);
         }
     }
 
     if SETTINGS.action.unexport
     {
-        info!("Running unexport for hosts: {}", hosts_list);
-        for host in &hosts
+        info!("Running unexport for hosts: {}", sources_list);
+        for source in &sources
         {
-            unexport(host);
+            let (name, _) = source;
+            unexport(name);
         }
     }
 
     if SETTINGS.action.upload_dropbox
     {
-        info!("Running dropbox upload for hosts: {} -- Individual uploads can hang forever if it decides it wants something. If that happens, you can probably just run `dbxcli account` to see what it wants and fix it. Otherwise check cmdlog to get the command and run it.",
-            hosts_list
+        info!(
+            "Running dropbox upload for hosts: {} -- Individual uploads can hang forever if it decides it wants something. If that happens, you can probably just run `dbxcli account` to see what it wants and fix it. Otherwise check cmdlog to get the command and run it.",
+            sources_list
         );
-        for host in &hosts
+        for source in &sources
         {
-            dropbox_up(host);
+            let (name, _) = source;
+            dropbox_up(name);
         }
     }
 
     if SETTINGS.action.upload_gdrive
     {
-        info!("Running Google Drive upload for hosts: {}", hosts_list);
-        for host in &hosts
+        info!("Running Google Drive upload for hosts: {}", sources_list);
+        for source in &sources
         {
-            gdrive_up(host);
+            let (name, _) = source;
+            gdrive_up(name);
         }
     }
     
     info!("Redundinator completed all actions.");
-}
-
-pub fn get_matching_host(name: &str) -> Option<Host>
-{
-    for host in &SETTINGS.hosts
-    {
-        if host.hostname == name {return Some(host.clone());}
-    }
-    None
 }

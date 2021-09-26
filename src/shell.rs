@@ -1,8 +1,6 @@
 use log::{error, /*warn,*/ info/*, debug, trace, log, Level*/};
 use run_script::{ScriptOptions};
 
-use crate::settings::Host;
-
 /**
 Run a shell command with extensive logging.
 
@@ -34,7 +32,7 @@ let cmd = format!("ls {}", ".");
 let ls_res = shell_and_log(cmd, &cmd_options, "list files", &SETTINGS.hosts[0], true);
 ```
 */
-pub fn shell_and_log(cmd: String, options: &ScriptOptions, purpose: &str, host: &Host, cmd_error_is_app_error: bool) -> Option<i32>
+pub fn shell_and_log(cmd: String, options: &ScriptOptions, purpose: &str, source_name: &str, cmd_error_is_app_error: bool) -> Option<i32>
 {
     info!(target: "cmdlog", "Command: {} -- RunOptions: {:?}", cmd, &options);
     match run_script::run(&cmd, &Vec::new(), &options)
@@ -44,14 +42,14 @@ pub fn shell_and_log(cmd: String, options: &ScriptOptions, purpose: &str, host: 
             if code != 0 && cmd_error_is_app_error
             {
                 error!(
-                    "{} returned nonzero exit code! Host: {} -- Full Command: {} -- Exit Code: {} -- see log folder for stdout and stderr output",
+                    "{} returned nonzero exit code! Source: {} -- Full Command: {} -- Exit Code: {} -- see log folder for stdout and stderr output",
                     purpose,
-                    host.hostname,
+                    source_name,
                     cmd,
                     code,
                 );
             }else{
-                info!("Success: {} for host: {}", purpose, host.hostname);
+                info!("Success: {} for source: {}", purpose, source_name);
             }
 
             info!(target: "stdoutlog", "Full Command: {} -- Exit Code: {} -- stdout: {}",
@@ -67,7 +65,7 @@ pub fn shell_and_log(cmd: String, options: &ScriptOptions, purpose: &str, host: 
             Some(code)
         },
         Err(e) => {
-            error!("Failed: {} Host: {} -- Error: {}", purpose, host.hostname, e);
+            error!("Failed: {} Source: {} -- Error: {}", purpose, source_name, e);
             None
         }
     }

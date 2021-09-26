@@ -2,18 +2,17 @@ use log::{error,/* warn,*/ info/*, debug, trace, log, Level*/};
 use run_script::ScriptOptions;
 use std::path::Path;
 
-use crate::settings::Host;
 use crate::settings::SETTINGS;
 use crate::upload::list_files;
 
-pub fn dropbox_up(host: &Host)
+pub fn dropbox_up(source_name: &str)
 {
-    info!("Starting dropbox upload (dbxcli) of exports for host: {}", host.hostname);
+    info!("Starting dropbox upload (dbxcli) of exports for source: {}", source_name);
 
     let dest = &SETTINGS.dropbox.dest_path;
     let dbxcli = &SETTINGS.dropbox.dbxcli_path;
 
-    let files = list_files(host);
+    let files = list_files(source_name);
 
     for file in files
     {
@@ -35,8 +34,8 @@ pub fn dropbox_up(host: &Host)
                 let (code, stdout, stderr) = v;
                 if code != 0
                 {
-                    error!("Dropbox Upload Client (dbxcli) returned nonzero exit code! Host: {} -- File: {} -- Full Command: {} -- Exit Code: {} -- see log folder for stdout and stderr output",
-                        host.hostname,
+                    error!("Dropbox Upload Client (dbxcli) returned nonzero exit code! Source: {} -- File: {} -- Full Command: {} -- Exit Code: {} -- see log folder for stdout and stderr output",
+                        source_name,
                         file,
                         cmd,
                         code,
@@ -56,10 +55,10 @@ pub fn dropbox_up(host: &Host)
                 }
             },
             Err(e) => {
-                error!("Failed to run Dropbox Upload Client (dbxcli)! Host: {} -- File: {} -- Error: {}", host.hostname, file, e);
+                error!("Failed to run Dropbox Upload Client (dbxcli)! Source: {} -- File: {} -- Error: {}", source_name, file, e);
             }
         }
     }
 
-    info!("Finished dropbox upload (dbxcli) of exports for host: {}", host.hostname);
+    info!("Finished dropbox upload (dbxcli) of exports for source: {}", source_name);
 }

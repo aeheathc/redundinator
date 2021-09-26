@@ -4,15 +4,14 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::settings::Host;
 use crate::settings::SETTINGS;
 use crate::shell::shell_and_log;
 use crate::upload::list_files;
 use crate::upload::dir_symlink;
 
-pub fn gdrive_up(host: &Host)
+pub fn gdrive_up(source_name: &str)
 {
-    info!("Starting Google Drive upload of exports for host: {}", host.hostname);
+    info!("Starting Google Drive upload of exports for source: {}", source_name);
     let managed = &SETTINGS.gdrive.managed_dir;
     let dest = &SETTINGS.gdrive.dest_path;
 
@@ -47,16 +46,16 @@ pub fn gdrive_up(host: &Host)
     //check for folder on gdrive side.
     //The usual rustic approach doesn't work here: if we just try to create a folder that already exists, it will silently create a duplicate (yes, with the exact same name!)
     let cmd_check_remote_folder = format!("drive stat -depth 0 {}", dest_with_sym);
-    if shell_and_log(cmd_check_remote_folder, &cmd_options, "Google Drive folder check", host, false) != Some(0)
+    if shell_and_log(cmd_check_remote_folder, &cmd_options, "Google Drive folder check", source_name, false) != Some(0)
     {
         //create folder on gdrive side
         let cmd_folder = format!("drive new -folder {}", dest_with_sym);
-        shell_and_log(cmd_folder, &cmd_options, "Google Drive folder creation", host, true);
+        shell_and_log(cmd_folder, &cmd_options, "Google Drive folder creation", source_name, true);
     }
 
     //adjust filenames to be relative to where the command is being executed, then push files
     let cmd_push = format!("drive push -no-prompt {}",
-        list_files(host).iter().map(|f| {
+        list_files(source_name).iter().map(|f| {
             format!(
                 "{}/{}",
                 dest_with_sym,
@@ -68,9 +67,9 @@ pub fn gdrive_up(host: &Host)
             )
         }).collect::<Vec<String>>().join(" ")
     );
-    shell_and_log(cmd_push, &cmd_options, "Upload files to Google Drive", host, true);
+    shell_and_log(cmd_push, &cmd_options, "Upload files to Google Drive", source_name, true);
 
-    info!("Finished gdrive_up for host: {}", host.hostname);
+    info!("Finished gdrive_up for source: {}", source_name);
 }
 
 /*

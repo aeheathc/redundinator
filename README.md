@@ -5,24 +5,26 @@ Backup program intended for backing up the files of a Linux server, and multiple
 - Uploads to a selection of cloud providers
 
 If backing up Windows clients with Redundinator, I recommend using backuppc/cygwin-rsyncd
+For backing up Android clients, check out SimpleSSHD
 
 # Interface
 - Provides a command line utility `redundinator-manual` for firing off tasks
 - Provides a web interface `redundinator-web` for monitoring the status
 
-# Requirements
-- cargo (compile-time)
+# Runtime Requirements
 - sshpass (only when configured to use password with ssh)
 - rsync
 - tar
 - zstd
 - split
 - dbxcli (when using Dropbox upload)
-- odeke-em/drive (when using Google Drive upload)
+- drive (Google Drive client) (when using Google Drive upload)
 
 # Todo
 - Support database dumping on remotes, not just localhost
-- Support multiple backup configurations for the same hostname so different data can synced with differing regularity
 - Transition some things from shell comands to API calls to reduce runtime environmental dependencies and make it less linux-centric
 - Create a daemon to make things more automated
 - Add an optional encryption step to the export
+- replace yaml/toml code with serde
+- dockerize for testing
+- better rsync error handling, ignore routine errors

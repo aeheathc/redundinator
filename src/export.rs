@@ -3,17 +3,16 @@ use run_script::ScriptOptions;
 use std::fs;
 
 use crate::latest_export_ts;
-use crate::settings::Host;
 use crate::settings::SETTINGS;
 
-pub fn export(host: &Host)
+pub fn export(source_name: &str)
 {
-    info!("Beginning export (tar+zstd|split) for host: {}", host.hostname);
+    info!("Beginning export (tar+zstd|split) for source: {}", source_name);
 
     let now = chrono::Utc::now().timestamp();
     let export_path = &SETTINGS.startup.export_path;
-    let source = format!(r#"{}/hosts/{}"#, &SETTINGS.startup.storage_path, host.hostname);
-    let dest = format!(r#"{}/{}_{}"#, export_path, host.hostname, now);
+    let source = format!(r#"{}/sources/{}"#, &SETTINGS.startup.storage_path, source_name);
+    let dest = format!(r#"{}/{}_{}"#, export_path, source_name, now);
 
     if let Err(e) = fs::create_dir_all(export_path)
     {
@@ -41,14 +40,14 @@ pub fn export(host: &Host)
             error!("Failed to run export (tar+zstd|split)! Command: {} -- Error: {}", cmd_export, e);
         }
     }
-    info!("Completed export (tar+zstd|split) for host: {}", host.hostname);
+    info!("Completed export (tar+zstd|split) for source: {}", source_name);
 }
 
-pub fn unexport(host: &Host)
+pub fn unexport(source_name: &str)
 {
-    info!("Beginning unexport (cat|untar+zstd) for host: {}", host.hostname);
+    info!("Beginning unexport (cat|untar+zstd) for source: {}", source_name);
 
-    let target_timestamp = match latest_export_ts(&host.hostname)
+    let target_timestamp = match latest_export_ts(&source_name)
     {
         Some(t) => t,
         None =>{
@@ -58,8 +57,8 @@ pub fn unexport(host: &Host)
     };
 
     let export_path = &SETTINGS.startup.export_path;
-    let source = format!(r#"{}/{}_{}.tar.zst."#, export_path, host.hostname, target_timestamp);
-    let dest = format!(r#"{}/hosts/{}/"#, &SETTINGS.startup.unexport_path, host.hostname);
+    let source = format!(r#"{}/{}_{}.tar.zst."#, export_path, source_name, target_timestamp);
+    let dest = format!(r#"{}/sources/{}/"#, &SETTINGS.startup.unexport_path, source_name);
     
     if let Err(e) = fs::create_dir_all(&dest)
     {
@@ -87,5 +86,5 @@ pub fn unexport(host: &Host)
             error!("Failed to run export (cat|untar+zstd)! Command: {} -- Error: {}", cmd_unexport, e);
         }
     }
-    info!("Completed unexport for host: {}", host.hostname);
+    info!("Completed unexport for source: {}", source_name);
 }

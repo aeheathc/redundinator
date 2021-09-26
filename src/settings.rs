@@ -22,16 +22,56 @@ pub struct Startup
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct Host
+pub struct Source
 {
     pub hostname: String,
     pub paths: Vec<String>,
     pub paths_exclude: Vec<String>,
-    pub rsync_username: String,
-    pub rsyncd_password: String,
-    pub rsync_ssh_port: u16,
-    pub rsync_ssh_keyfile: String,
-    pub rsync_ssh_password: String
+    pub method: SyncMethod
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum SyncMethod
+{
+    Rsyncd(RsyncdSetup),
+    RsyncSsh(RsyncSshSetup),
+    RsyncLocal
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RsyncdSetup
+{
+    pub username: String,
+    pub password: String
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RsyncSshSetup
+{
+    pub creds: SshCreds,
+    pub port: u16,
+    pub remote_path_to_rsync_binary: Option<String>
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum SshCreds
+{
+    Password(SshCredsPassword),
+    Key(SshCredsKey)
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SshCredsPassword
+{
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SshCredsKey
+{
+    pub username: String,
+    pub keyfile_path: String
 }
 
 #[derive(Serialize, Deserialize)]
@@ -63,7 +103,7 @@ pub struct Action
     pub upload_dropbox: bool,
     pub upload_gdrive: bool,
     pub mysql_dump: bool,
-    pub host: String,
+    pub source: String,
     pub unexport: bool
 }
 
@@ -74,7 +114,7 @@ The main type storing all the configuration data.
 pub struct Settings
 {
     pub startup: Startup,
-    pub hosts: Vec<Host>,
+    pub sources: HashMap<String, Source>,
     pub mysql: Mysql,
     pub action: Action,
     pub dropbox: Dropbox,
@@ -162,7 +202,7 @@ impl Settings
             match ce //determine reason for failure
             {
                 ConfigError::Frozen => panic!("Couldn't load config because it was already frozen/deserialized"),
-                ConfigError::NotFound(prop) => panic!("Couldn't load config because the following thing was 'not found': {}",prop),
+                ConfigError::NotFound(prop) => panic!("Couldn't load config because the following thing was 'not found': {}", prop),
                 ConfigError::PathParse(ek) => panic!("Couldn't load config because the 'path could not be parsed' due to the following: {}", ek.description()),
                 ConfigError::FileParse{uri: _, cause: _} => {panic!("Couldn't load config because of a parser failure.")},
                 ConfigError::Type{origin:_,unexpected:_,expected:_,key:_} => panic!("Couldn't load config because of a type conversion issue"),
@@ -234,6 +274,7 @@ pub struct SettingDefinition
 
 //This set of types may seem limiting but it exactly matches what we can get out of Config (crate for file based configuration)
 #[allow(dead_code)]
+#[derive(Copy, Clone)]
 pub enum SettingValue
 {
     ValString(&'static str),
@@ -293,14 +334,6 @@ impl Display for SettingValue
             SettingValue::ValInt(v) => write!(f, "{}", v),
             SettingValue::ValFloat(v) => write!(f, "{}", v),
         }
-    }
-}
-
-impl Copy for SettingValue {}
-
-impl Clone for SettingValue {
-    fn clone(&self) -> Self {
-        *self
     }
 }
 
@@ -377,7 +410,7 @@ lazy_static!
         SettingDefinition{category: "startup", name: "storage_path",       cli_short: "s", cli_long: "storage_path",       environment_variable: "REDUNDINATOR_STORAGE_PATH",       value: SettingValue::ValString("/var/redundinator/backups/"),  description: "Local path to store all the backed up data"},
         SettingDefinition{category: "startup", name: "export_path",        cli_short: "x", cli_long: "export_path",        environment_variable: "REDUNDINATOR_EXPORT_PATH",        value: SettingValue::ValString("/tmp/redundinator/exports/"),  description: "Local path to store compressed exports ready for cloud upload"},
         SettingDefinition{category: "startup", name: "unexport_path",      cli_short: "r", cli_long: "unexport_path",      environment_variable: "REDUNDINATOR_UNEXPORT_PATH",      value: SettingValue::ValString("/tmp/redundinator/unexports/"),description: "Local path for files recovered from exports"},
-        SettingDefinition{category: "hosts",   name: "hosts",              cli_short: "h", cli_long: "hosts",              environment_variable: "REDUNDINATOR_HOSTS",              value: SettingValue::ValString(""),                            description: "Definition of hosts to be backed up"},
+        SettingDefinition{category: "sources", name: "sources",            cli_short: "c", cli_long: "sources",            environment_variable: "REDUNDINATOR_SOURCES",            value: SettingValue::ValString(""),                            description: "Definition of data sources to be backed up"},
         SettingDefinition{category: "mysql",   name: "mysqldump_username", cli_short: "u", cli_long: "mysqldump_username", environment_variable: "REDUNDINATOR_MYSQLDUMP_USERNAME", value: SettingValue::ValString(""),                            description: "Username for mysqldump on localhost"},
         SettingDefinition{category: "mysql",   name: "mysqldump_password", cli_short: "p", cli_long: "mysqldump_password", environment_variable: "REDUNDINATOR_MYSQLDUMP_PASSWORD", value: SettingValue::ValString(""),                            description: "Password for mysqldump on localhost"},
         SettingDefinition{category: "dropbox", name: "dbxcli_path",        cli_short: "d", cli_long: "dbxcli_path",        environment_variable: "REDUNDINATOR_DBXCLI_PATH",        value: SettingValue::ValString("dbxcli"),                      description: "Location of the dbxcli binary. You can leave this as just dbxcli if it's in your PATH. Otherwise, supply an absolute path here."},
@@ -392,7 +425,7 @@ lazy_static!
         SettingDefinition{category: "action", name: "upload_dropbox", cli_short: "D", cli_long: "upload_dropbox", environment_variable: "REDUNDINATOR_UPLOAD_DROPBOX", value: SettingValue::ValBoolean(false), description: "Upload to Dropbox. Before trying this make sure you're logged in to dropbox by running `dbxcli account`"},
         SettingDefinition{category: "action", name: "upload_gdrive",  cli_short: "G", cli_long: "upload_gdrive",  environment_variable: "REDUNDINATOR_UPLOAD_GDRIVE",  value: SettingValue::ValBoolean(false), description: "Upload to Google Drive."},
         SettingDefinition{category: "action", name: "mysql_dump",     cli_short: "M", cli_long: "mysql_dump",     environment_variable: "REDUNDINATOR_MYSQL_DUMP",     value: SettingValue::ValBoolean(false), description: "Enable to dump localhost mysql contents to flat file and include in the backup storage folder"},
-        SettingDefinition{category: "action", name: "host",           cli_short: "H", cli_long: "active_host",    environment_variable: "REDUNDINATOR_ACTIVE_HOST",    value: SettingValue::ValString(""),     description: "Only do actions for the named host. If blank, use all hosts."}
+        SettingDefinition{category: "action", name: "source",         cli_short: "C", cli_long: "active_source",  environment_variable: "REDUNDINATOR_ACTIVE_SOURCE",  value: SettingValue::ValString(""),     description: "Only do actions for the named data source. If blank, use all."}
     );
 
     static ref SETTINGS_DEFN_MAP: HashMap<&'static str, HashMap<&'static str, &'static SettingDefinition>> = Settings::categorize_defns(&SETTINGS_DEFN);
@@ -423,21 +456,22 @@ lazy_static!
             dest_path:   SETTINGS_DEFN_MAP["gdrive"]["dest_path"].value.to_string(),
             managed_dir: SETTINGS_DEFN_MAP["gdrive"]["managed_dir"].value.to_string()
         },
-        hosts: vec!(
-            Host{hostname: String::from("localhost"), paths: vec!(String::from("/home/")), paths_exclude: Vec::new(), rsync_username: String::from(""),     rsyncd_password: String::from(""),     rsync_ssh_port: 0,  rsync_ssh_keyfile: String::from(""),                       rsync_ssh_password: String::from("")},
-            Host{hostname: String::from("client1"),   paths: vec!(String::from("/home/")), paths_exclude: Vec::new(), rsync_username: String::from("user"), rsyncd_password: String::from("pass"), rsync_ssh_port: 0,  rsync_ssh_keyfile: String::from(""),                       rsync_ssh_password: String::from("")},
-            Host{hostname: String::from("client2"),   paths: vec!(String::from("/home/")), paths_exclude: Vec::new(), rsync_username: String::from("user"), rsyncd_password: String::from(""),     rsync_ssh_port: 22, rsync_ssh_keyfile: String::from("/home/user/client2.key"), rsync_ssh_password: String::from("")},
-            Host{hostname: String::from("client3"),   paths: vec!(String::from("/home/")), paths_exclude: Vec::new(), rsync_username: String::from("user"), rsyncd_password: String::from(""),     rsync_ssh_port: 22, rsync_ssh_keyfile: String::from(""),                       rsync_ssh_password: String::from("pass")},
-        ),
+        sources: vec![
+            (String::from("localhost"),         Source{hostname: String::from("localhost"), paths: vec!(String::from("/home/")),        paths_exclude: Vec::new(), method: SyncMethod::RsyncLocal }),
+            (String::from("client1"),           Source{hostname: String::from("client1"),   paths: vec!(String::from("/home/")),        paths_exclude: Vec::new(), method: SyncMethod::Rsyncd(RsyncdSetup{username: String::from("user"), password: String::from("pass")}) }),
+            (String::from("client2"),           Source{hostname: String::from("client2"),   paths: vec!(String::from("/home/")),        paths_exclude: Vec::new(), method: SyncMethod::RsyncSsh(RsyncSshSetup{port: 22, remote_path_to_rsync_binary: Some(String::from("/bin/rsync")), creds: SshCreds::Key(SshCredsKey{username: String::from("user"), keyfile_path: String::from("/home/user/client2.key")})}) }),
+            (String::from("client3_main"),      Source{hostname: String::from("client3"),   paths: vec!(String::from("/home/")),        paths_exclude: Vec::new(), method: SyncMethod::RsyncSsh(RsyncSshSetup{port: 22, remote_path_to_rsync_binary: None,                             creds: SshCreds::Password(SshCredsPassword{username: String::from("user"), password: String::from("pass")})}) }),
+            (String::from("client3_hugefiles"), Source{hostname: String::from("client3"),   paths: vec!(String::from("/mnt/archive/")), paths_exclude: Vec::new(), method: SyncMethod::RsyncSsh(RsyncSshSetup{port: 22, remote_path_to_rsync_binary: None,                             creds: SshCreds::Password(SshCredsPassword{username: String::from("user"), password: String::from("pass")})}) }),
+        ].into_iter().collect(),
         action: Action
         {
             sync:           SETTINGS_DEFN_MAP["action"]["sync"].value.to_bool(),
             export:         SETTINGS_DEFN_MAP["action"]["export"].value.to_bool(),
-            unexport:       SETTINGS_DEFN_MAP["action"]["export"].value.to_bool(),
+            unexport:       SETTINGS_DEFN_MAP["action"]["unexport"].value.to_bool(),
             upload_dropbox: SETTINGS_DEFN_MAP["action"]["upload_dropbox"].value.to_bool(),
             upload_gdrive:  SETTINGS_DEFN_MAP["action"]["upload_gdrive"].value.to_bool(),
             mysql_dump:     SETTINGS_DEFN_MAP["action"]["mysql_dump"].value.to_bool(),
-            host:           SETTINGS_DEFN_MAP["action"]["host"].value.to_string()
+            source:         SETTINGS_DEFN_MAP["action"]["source"].value.to_string()
         }
     };
 

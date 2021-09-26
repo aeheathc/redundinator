@@ -22,9 +22,9 @@ use log::{error, /*warn, info, debug, trace, log, Level*/};
 use regex::Regex;
 
 
-pub fn latest_export_ts(hostname: &str) -> Option<i64>
+pub fn latest_export_ts(name: &str) -> Option<i64>
 {
-    let glob_str = format!("{}/{}_*.tar.zst.*", &SETTINGS.startup.export_path, hostname);
+    let glob_str = format!("{}/{}_*.tar.zst.*", &SETTINGS.startup.export_path, name);
     let mut latest: Option<i64> = None;
     let matches = match glob(&glob_str)
     {
