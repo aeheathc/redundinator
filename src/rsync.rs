@@ -2,11 +2,9 @@ use log::{error,/* warn,*/ info, debug, trace/*, log, Level*/};
 #[cfg(target_family = "unix")]
 use nix;
 use run_script::ScriptOptions;
-use std::fs;
-use std::fs::OpenOptions;
+use std::{fs, fs::OpenOptions, io::Write, path::PathBuf};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::OpenOptionsExt;
-use std::io::Write;
 
 use crate::settings::SshCreds;
 use crate::settings::Source;
@@ -22,16 +20,15 @@ pub fn sync(named_source: (&String, &Source))
     exclude_vec.append(&mut source.paths_exclude.clone());
     let excludes = exclude_str(exclude_vec);
 
-    for path in &source.paths
+    for source_path in &source.paths
     {
-        let dest = format!("{}/sources/{}/paths/{}",
-            &SETTINGS.startup.storage_path,
-            name,
-            path.replace("\\","_").replace("/","_").replace(" ","_")
-        );
+        let mut dest = PathBuf::from(&SETTINGS.startup.storage_path);
+        dest.push(format!("sources/{name}/paths"));
+        dest.push(source_path.replace(['\\','/',' ',':'],"_"));
+
         if let Err(e) = fs::create_dir_all(&dest)
         {
-            error!("Couldn't create directory to sync a path. Source: {} -- Host: {} -- Path: {} -- Error: {}", name, source.hostname, path, e);
+            error!("Couldn't create directory to sync a path. Source: {} -- Host: {} -- Path: {} -- Dest: {} -- Error: {}", name, source.hostname, source_path, dest.to_string_lossy(), e);
             continue;
         }
 
@@ -39,15 +36,13 @@ pub fn sync(named_source: (&String, &Source))
         {
             SyncMethod::RsyncLocal => {
                 if source.hostname != "localhost" {error!("Tried to use sync method 'RsyncLocal' on non-local host: {}", source.hostname); break;}
-                format!(r#"rsync -a --progress --delete {} {} {}"#,
-                    excludes,
-                    path,
-                    dest
-                ).to_string()
+                format!(r#"rsync -a --progress --delete {excludes} {source_path} {}"#, dest.to_string_lossy()).to_string()
             },
             SyncMethod::Rsyncd(setup) => {
                 // write credentials file for rsync
+                if let Err(e) = fs::create_dir_all("config/") { error!("Couldn't create directory for rsyncd credentials file. Error: {}", e); break; }
                 let rsync_pw_file = "config/rsync";
+
                 // if we're running as root, the file must be owned by root or rsync will complain
                 if is_root() && fs::remove_file(rsync_pw_file).is_err(){ debug!("Running as root but unable to delete rsync creds file before writing new one. It probably doesn't exist yet which is fine."); }
                 match OpenOptions::new().write(true).create(true).truncate(true).set_mode(600).open(rsync_pw_file)
@@ -58,13 +53,8 @@ pub fn sync(named_source: (&String, &Source))
                     Err(e) => { error!(r#"Failed to open/create rsyncd credentials file "{}", skipping sync for source: {} -- Error: {}"#, rsync_pw_file, name, e); break; }
                 };
 
-                let remote_path = format!(r#"rsync://{}@{}/{}/"#, setup.username, source.hostname, path.trim_start_matches('/'));
-                format!(r#"rsync -a --progress --delete --password-file={} {} {} {}"#,
-                    rsync_pw_file,
-                    excludes,
-                    remote_path,
-                    dest
-                )
+                let remote_path = format!(r#"rsync://{}@{}/{}/"#, setup.username, source.hostname, source_path.trim_start_matches('/'));
+                format!(r#"rsync -a --progress --delete --password-file={rsync_pw_file} {excludes} {remote_path} {}"#, dest.to_string_lossy())
             },
             SyncMethod::RsyncSsh(setup) => {
                 /* When the path isn't specified we use some magic that attempts to put the remote env in interactive mode, which makes it load the correct PATH to be able to find rsync
@@ -80,25 +70,25 @@ pub fn sync(named_source: (&String, &Source))
                 match &setup.creds
                 {
                     SshCreds::Key(creds) => {
-                        let remote_path = format!(r#"{}@{}:{}/"#, creds.username, source.hostname, path);
+                        let remote_path = format!(r#"{}@{}:{source_path}/"#, creds.username, source.hostname);
                         format!(r#"rsync -a --progress --delete --rsync-path="{}" -e "ssh -i {} -p {}" {} {} {}"#,
                             rsync_path,
                             creds.keyfile_path,
                             setup.port,
                             excludes,
                             remote_path,
-                            dest
+                            dest.to_string_lossy()
                         )
                     },
                     SshCreds::Password(creds) => {
-                        let remote_path = format!(r#"{}@{}:{}/"#, creds.username, source.hostname, path);
+                        let remote_path = format!(r#"{}@{}:{source_path}/"#, creds.username, source.hostname);
                         format!(r#"sshpass -p "{}" rsync -a --progress --delete --rsync-path="{}" -e "ssh -p {}" {} {} {}"#,
                             rsync_path,
                             creds.password,
                             setup.port,
                             excludes,
                             remote_path,
-                            dest
+                            dest.to_string_lossy()
                         )
                     }
                 }
@@ -119,7 +109,7 @@ pub fn sync(named_source: (&String, &Source))
                     error!("Rsync returned nonzero exit code! Source: {} -- Host: {} -- Path: {} -- Full Command: {} -- Exit Code: {} -- see log folder for stdout and stderr output",
                         name,
                         source.hostname,
-                        path,
+                        source_path,
                         cmd_sync,
                         code,
                     );
@@ -136,7 +126,7 @@ pub fn sync(named_source: (&String, &Source))
                 }
             },
             Err(e) => {
-                error!("Failed to run rsync! Source: {} -- Host: {} -- Path: {} -- Error: {}", name, source.hostname, path, e);
+                error!("Failed to run rsync! Source: {} -- Host: {} -- Path: {} -- Error: {}", name, source.hostname, source_path, e);
             }
         }
         

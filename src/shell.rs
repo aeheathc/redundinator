@@ -1,5 +1,5 @@
 use log::{error, /*warn,*/ info/*, debug, trace, log, Level*/};
-use run_script::{ScriptOptions};
+use run_script::ScriptOptions;
 
 /**
 Run a shell command with extensive logging.
@@ -22,20 +22,22 @@ use redundinator::shell::shell_and_log;
 let cmd_path: PathBuf = ["."].iter().collect();
 let cmd_options = ScriptOptions{
     runner: Some("/bin/bash".to_string()),
+    runner_args: None,
     working_directory: Some(cmd_path),
     input_redirection: IoOptions::Inherit,
     output_redirection: IoOptions::Pipe,
     exit_on_error: false,
-    print_commands: false
+    print_commands: false,
+    env_vars: None
 };
 let cmd = format!("ls {}", ".");
-let ls_res = shell_and_log(cmd, &cmd_options, "list files", &SETTINGS.hosts[0], true);
+let ls_res = shell_and_log(cmd, &cmd_options, "list files", &SETTINGS.sources.keys().next().unwrap(), true);
 ```
 */
 pub fn shell_and_log(cmd: String, options: &ScriptOptions, purpose: &str, source_name: &str, cmd_error_is_app_error: bool) -> Option<i32>
 {
     info!(target: "cmdlog", "Command: {} -- RunOptions: {:?}", cmd, &options);
-    match run_script::run(&cmd, &Vec::new(), &options)
+    match run_script::run(&cmd, &Vec::new(), options)
     {
         Ok(v) => {
             let (code, stdout, stderr) = v;

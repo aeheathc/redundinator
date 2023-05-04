@@ -35,8 +35,8 @@ pub fn dump()
     let dump_location = dump_dir + "localhost.sql";
     
     //run mysqldump
-    let cmd = format!(r#"/usr/bin/mysqldump --defaults-file="{}" -u root --all-databases > {}"#, cnf_location, dump_location);
+    let cmd = format!(r#"/usr/bin/mysqldump --defaults-file="{cnf_location}" -u root --all-databases > {dump_location}"#);
     info!(target: "cmdlog", "{}", cmd);
-    let cmdo = match run_script::run(&cmd, &Vec::new(), &ScriptOptions::new()) {Ok(v) => format!("{}<br/>{}", v.1, v.2), Err(e) => format!("Error: {}", e)};
+    let cmdo = match run_script::run(&cmd, &Vec::new(), &ScriptOptions::new()) {Ok(v) => format!("{}<br/>{}", v.1, v.2), Err(e) => format!("Error: {e}")};
     info!("Completed mysql dump: {}", cmdo);
 }

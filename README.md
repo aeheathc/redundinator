@@ -18,13 +18,17 @@ For backing up Android clients, check out SimpleSSHD
 - zstd
 - split
 - dbxcli (when using Dropbox upload)
-- drive (Google Drive client) (when using Google Drive upload)
+
+# Other things you can do with the code
+- Run `docker-compose up -d` to start the testing environment
 
 # Todo
 - Support database dumping on remotes, not just localhost
-- Transition some things from shell comands to API calls to reduce runtime environmental dependencies and make it less linux-centric
+- Transition some things from shell commands to API calls to reduce runtime environmental dependencies and make it less linux-centric
 - Create a daemon to make things more automated
 - Add an optional encryption step to the export
 - replace yaml/toml code with serde
-- dockerize for testing
 - better rsync error handling, ignore routine errors
+- Create client apps for data transfer using rsync library instead of relying on rsync daemon especially for android and windows
+- Support specifying multiple hostnames/IPs for one source as fallbacks, for example, when a client might be connected with any one of multiple network interfaces
+- Finish setting up client2 and client3 in Docker config

@@ -1,8 +1,8 @@
 /target
 /data/log/*.log
-/data/config/*.toml
-/data/config/*.yml
-/data/config/*.json
+/data/dockerVolumes/*
+/data/config.json
+/data/serverFiles/*
 
 ########## Platform/language/tool specific stuff that github recommends to ignore
 
@@ -12,7 +12,7 @@ target/
 **/*.rs.bk
 
 ########## VS Code
-.vscode/*
+.vscode
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json

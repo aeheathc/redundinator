@@ -24,8 +24,8 @@ pub fn dropbox_up(source_name: &str)
             },
             None=>{error!("Failed to get filename from path: {}",file);continue;}
         };
-        let dest_file = format!("{}/{}", dest, basename);
-        let cmd = format!("{} put {} {}", dbxcli, file, dest_file);
+        let dest_file = format!("{dest}/{basename}");
+        let cmd = format!("{dbxcli} put {file} {dest_file}");
         info!(target: "cmdlog", "{}", cmd);
         info!("Uploading file {}", file);
         match run_script::run(&cmd, &Vec::new(), &ScriptOptions::new())

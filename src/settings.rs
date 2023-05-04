@@ -1,24 +1,31 @@
-use clap::App;
-use config::{ConfigError, Config, File};
+use clap::Parser;
+use config::{ConfigError, Config, File, FileFormat};
+use lazy_static::lazy_static;
 use log::{error/*, warn, info, debug, trace, log, Level*/};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::env;
-use std::fmt::Display;
 use std::fs;
-use std::path::Path;
-use yaml_rust::YamlLoader;
+use std::path::PathBuf;
+
+use log::LevelFilter;
+use log4rs::append::console::{ConsoleAppender, Target};
+use log4rs::append::file::FileAppender;
+use log4rs::encode::pattern::PatternEncoder;
+use log4rs;
 
 /**
 The portion of the config needed immediately, before we can even do so much as display an error over HTTP.
 */
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Startup
 {
-    pub working_dir: String,
-    pub listen_addr: String,
+    pub config_file_path: String,
+    pub log_path: String,
     pub storage_path: String,
     pub export_path: String,
-    pub unexport_path: String
+    pub unexport_path: String,
+    pub listen_addr: String
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -74,28 +81,33 @@ pub struct SshCredsKey
     pub keyfile_path: String
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Mysql
 {
     pub mysqldump_username: String,
     pub mysqldump_password: String
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Dropbox
 {
     pub dbxcli_path: String,
     pub dest_path: String
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GDrive
 {
+    pub drive_id: String,
     pub dest_path: String,
-    pub managed_dir: String
+    pub client_id: String,
+    pub client_secret: String,
+    pub redirect_uri: String,
+    pub token: String,
+    pub refresh_token: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Action
 {
     pub sync: bool,
@@ -110,7 +122,7 @@ pub struct Action
 /**
 The main type storing all the configuration data.
 */
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Settings
 {
     pub startup: Startup,
@@ -124,34 +136,12 @@ pub struct Settings
 impl Settings
 {
     /**
-    Converts the settings metadata (vector of field definintions, friendly toward clap)
-    to a more structured format (2 dimensional hashmap, friendly toward file config system)
-    */
-    fn categorize_defns(definitions: &[SettingDefinition]) -> HashMap<&'static str, HashMap<&'static str, &SettingDefinition>>
-    {
-        let mut out = HashMap::new();
-        for field in definitions
-        {
-            let cat = match out.get_mut(field.category)
-            {
-                Some(c) => c,
-                None => {
-                    out.insert(field.category, HashMap::new());
-                    out.get_mut(field.category).expect("Newly inserted config category not found, must be a bug")
-                }
-            };
-            cat.insert(field.name, field);
-        }
-        out
-    }
-
-    /**
     Load configuration for app and logger from sources.
 
     - Load app & logger config, merging values from all sources (cmd, env, file, defaults) with appropriate priority
     - Store app config in a lazy_static ref settings::SETTINGS
     - Set the working directory of the app to what is configured, so relative paths work correctly.
-    - If either config file is missing, write a new one with default settings.
+    - If either config file is missing, write a new one with defaults.
     - Start up logger.
 
     # Panics
@@ -165,296 +155,177 @@ impl Settings
     */
     fn load() -> Self
     {
-        let path_config = "config/config.json";
-        let path_log4rs_config = "config/log4rs.yml";
-        //std::env::set_var("RUST_LOG", "my_errors=trace,actix_web=info");
-        //std::env::set_var("RUST_BACKTRACE", "1");
-
-        /* Load command-line arguments. For those unspecified, load environment variables.
-         * We convert them to yaml for clap because the builder interface is more for hardcoding,
-         * the yaml input works better with dynamic generation.
+        /* Although the main utility the Config crate provides to us is loading the config file, we also let it handle 
+           combining all the config sources while resolving priority, and doing the final deserialization to the Settings type.
         */
-        let cmd_yaml = format!(
-            "name: redundinator\nversion: dev\nabout: Backup software\nargs:\n{}",
-            SETTINGS_DEFN.iter().map(|d| d.to_yaml()).collect::<Vec<String>>().join("")
-        );
 
-        let cmd_yaml_obj = match YamlLoader::load_from_str(&cmd_yaml) {
-            Ok(o) => o,
-            Err(e) => {
-                let err = format!("Config definition resulted in invalid yaml. Error: {}\nYaml: \n{}", e, cmd_yaml);
-                panic!(err);
-            }
-        };
+        /* Make a version of the default settings where sources is empty. This is only necessary because `config` will MERGE HashMaps
+           from multiple config sources together, instead of having one override the other like most data types. If they fix that behavior
+           then we can remove this and use DEFAULT_SETTINGS directly.
+        */
+        let mut default_without_sources = DEFAULT_SETTINGS.clone();
+        default_without_sources.sources = HashMap::new();
+        let serialized_default_config_without_sources = serde_json::to_string(&default_without_sources).expect("Couldn't serialize default config");
+        
+        // using "pretty" because, if the config file is missing and we need to write it out, this will be used as the contents
+        let serialized_default_config = serde_json::to_string_pretty(&DEFAULT_SETTINGS.clone()).expect("Couldn't serialize default config");
+        
 
-        let cmd_matches = App::from_yaml(&cmd_yaml_obj[0]).get_matches();
+        // Load command-line arguments. For those unspecified, load environment variables.
+        let cmd_args = ClapArgs::parse();
 
-        //set cwd
-        let working_dir = cmd_matches.value_of("working_dir").expect("Couldn't determine target working dir");
-        fs::create_dir_all(String::from(working_dir)+"/config").expect("Couldn't ensure existence of config dir");
-        fs::create_dir_all(String::from(working_dir)+"/log").expect("Couldn't ensure existence of log dir");
-        env::set_current_dir(Path::new(working_dir)).expect("Couldn't set cwd");
+        // ensure existence of dir for config file
+        let config_file_path = match &cmd_args.startup_config_file_path {Some(s) => String::from(s), None => String::from(&DEFAULT_SETTINGS.startup.config_file_path)};
+        fs::create_dir_all(PathBuf::from(&config_file_path).parent().expect("Couldn't determine dir of specified config file")).expect("Couldn't ensure existence of directory containing config file");
     
-        //attempt to load config file
-        let mut file_config = Config::new();
-        if let Err(ce) = file_config.merge(File::with_name(&path_config))
+        // initialize Config, give it the defaults, and point it at the config file
+        let mut file_config = Config::builder()
+            .add_source(File::from_str(&serialized_default_config_without_sources, FileFormat::Json))
+            .add_source(File::with_name(&config_file_path));
+
+        // Pass the (command line args + env vars) to Config as overrides
+        if let serde_json::Value::Object(cmd) = serde_json::to_value(cmd_args).expect("Couldn't serialize cmd/env args")
         {
-            match ce //determine reason for failure
+            for (name, val) in cmd
             {
-                ConfigError::Frozen => panic!("Couldn't load config because it was already frozen/deserialized"),
-                ConfigError::NotFound(prop) => panic!("Couldn't load config because the following thing was 'not found': {}", prop),
-                ConfigError::PathParse(ek) => panic!("Couldn't load config because the 'path could not be parsed' due to the following: {}", ek.description()),
-                ConfigError::FileParse{uri: _, cause: _} => {panic!("Couldn't load config because of a parser failure.")},
-                ConfigError::Type{origin:_,unexpected:_,expected:_,key:_} => panic!("Couldn't load config because of a type conversion issue"),
-                ConfigError::Message(e_str) => panic!("Couldn't load config because of the following: {}", e_str),
-                ConfigError::Foreign(_) =>{
-                    //looks like the file is missing, attempt to write new file with defaults then load it. If this also fails then bail
-                    let serialized_default_config = serde_json::to_string_pretty(&*DEFAULT_SETTINGS).expect("Couldn't serialize default config");
-                    if let Err(e) = fs::write(String::from(path_config), serialized_default_config){
-                        panic!("Couldn't read main config file or write default main config file: {}", e);
-                    }
-                    file_config.merge(File::with_name(&path_config)).expect("Couldn't load newly written default main config file.");
+                let name_path = name.replacen('_', ".", 1);
+                match val {
+                    Value::Null => {},
+                    Value::Bool(bool_val ) => {if bool_val { file_config = file_config.set_override(name_path, true             ).expect("Couldn't read cmd/env arg");}},
+                    Value::Number(num_val) => {              file_config = file_config.set_override(name_path, num_val.as_i64() ).expect("Couldn't read cmd/env arg"); },
+                    Value::String(str_val) => {              file_config = file_config.set_override(name_path, str_val          ).expect("Couldn't read cmd/env arg"); },
+                    _ => {panic!("Invalid value for cmd arg {name}");}
                 }
             }
-        }
-       
-        //command line arguments, if given, override what is in the config file
-        for defn in SETTINGS_DEFN.iter()
-        {
-            let name_in_file = format!("{}.{}", defn.category, defn.name);
-            let strval = match cmd_matches.value_of(defn.cli_long){None => "", Some(v) => v};
-            if strval != defn.value.to_string()
-            {
-                file_config.set(&name_in_file, cmd_matches.value_of(defn.cli_long)).expect("Couldn't override config setting");
-            }
-            
+        }else{
+            panic!("Invalid serialization of cmd/env args");
         }
 
-        //attempt to load logging config
-        if let Err(le) = log4rs::init_file(path_log4rs_config, Default::default())
+        //Resolve all the config sources and get our config
+        /*The build function makes file_config unusable afterward, but we want to be able to retry
+          it if it fails for a reason we think we can correct, so we run build on a clone.
+        */
+        let config = match file_config.clone().build()
         {
-            match le //determine reason for failure
+            Ok(c) => c,
+            Err(ce) =>
             {
-                log4rs::Error::Log4rs(_) =>
+                match ce //determine reason for failure
                 {
-                    //looks like the file is missing, attempt to write new file with defaults then load it. If this also fails then bail
-                    if let Err(e) = fs::write(String::from(path_log4rs_config), DEFAULT_LOG4RS.to_string()){
-                        panic!("Couldn't read log config file or write default log config file: {}", e);
+                    ConfigError::Frozen                                       => panic!("Couldn't load config because it was already frozen/deserialized"),
+                    ConfigError::NotFound(prop)                               => panic!("Couldn't load config because the following thing was 'not found': {prop}"),
+                    ConfigError::PathParse(ek)                                => panic!("Couldn't load config because the 'path could not be parsed' due to the following: {}", ek.description()),
+                    ConfigError::FileParse{uri: _, cause: _}                  => panic!("Couldn't load config because of a parser failure."),
+                    ConfigError::Type{origin:_,unexpected:_,expected:_,key:_} => panic!("Couldn't load config because of a type conversion issue"),
+                    ConfigError::Message(e_str)                               => panic!("Couldn't load config because of the following: {e_str}"),
+                    ConfigError::Foreign(_)                                   => {
+                        //looks like the file is missing, attempt to write new file with defaults then load it. If this also fails then bail
+                        if let Err(e) = fs::write(config_file_path, serialized_default_config){
+                            panic!("Couldn't read main config file or write default main config file: {e}");
+                        }
+                        file_config.build().expect("Still had a problem reading main config file after writing it out")
                     }
-                    log4rs::init_file(path_log4rs_config, Default::default()).expect("Couldn't load newly written default log config file.");
-                },
-                _ => {panic!("Couldn't parse log config.");}
+                }
             }
-        }
-
-        //Export config to Settings struct
-        match file_config.try_into::<Settings>()
+        };
+       
+        // Export config to Settings struct
+        let settings: Settings = match config.try_deserialize()
         {
-            Err(msg) => {let e = format!("Couldn't export config: {}", msg); error!("{}",e); panic!(e);},
+            Err(msg) => {let e = format!("Couldn't export config: {msg}"); error!("{}",e); panic!("{}",e);},
             Ok(s) => {
                 s
             }
-        }
+        };
+
+        // setup logger
+        fs::create_dir_all(String::from(&settings.startup.log_path)).expect("Couldn't ensure existence of log dir");
+        let appender_stdout       = ConsoleAppender::builder().build();
+        let appender_stderr       = ConsoleAppender::builder().target(Target::Stderr).build();
+        let appender_main         = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] {l} - {m}{n}"))).build(format!("{}/main.log",   &settings.startup.log_path)).expect("Couldn't open main log file.");
+        let appender_stdoutlogger = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] - {m}{n}"    ))).build(format!("{}/stdout.log", &settings.startup.log_path)).expect("Couldn't open log file for stdout of external commands.");
+        let appender_stderrlogger = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] - {m}{n}"    ))).build(format!("{}/stderr.log", &settings.startup.log_path)).expect("Couldn't open log file for stderr of external commands.");
+        let appender_cmdlogger    = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] - {m}{n}"    ))).build(format!("{}/cmd.log",    &settings.startup.log_path)).expect("Couldn't open log file for external commands.");
+        let logger_setup = log4rs::config::Config::builder()
+            .appender(log4rs::config::Appender::builder().build("stdout",       Box::new(appender_stdout)))
+            .appender(log4rs::config::Appender::builder().build("stderr",       Box::new(appender_stderr)))
+            .appender(log4rs::config::Appender::builder().build("main",         Box::new(appender_main)))
+            .appender(log4rs::config::Appender::builder().build("stdoutlogger", Box::new(appender_stdoutlogger)))
+            .appender(log4rs::config::Appender::builder().build("stderrlogger", Box::new(appender_stderrlogger)))
+            .appender(log4rs::config::Appender::builder().build("cmdlogger",    Box::new(appender_cmdlogger)))
+            .logger(log4rs::config::Logger::builder().appender("stdoutlogger").additive(false).build("stdoutlog", LevelFilter::Info))
+            .logger(log4rs::config::Logger::builder().appender("stderrlogger").additive(false).build("stderrlog", LevelFilter::Info))
+            .logger(log4rs::config::Logger::builder().appender("cmdlogger"   ).additive(false).build("cmdlog",    LevelFilter::Info))
+            .build(log4rs::config::Root::builder().appender("stdout").appender("main").build(LevelFilter::Info))
+            .expect("Couldn't build logger setup.");
+        log4rs::init_config(logger_setup).expect("Couldn't initialize logger.");
+
+        settings
     }
 }
 
-/**
-Holds all of the metadata for a setting, including the default value.
-*/
-pub struct SettingDefinition
-{
-    pub category: &'static str,
-    pub name: &'static str,
-    pub cli_short: &'static str,
-    pub cli_long: &'static str,
-    pub environment_variable: &'static str,
-    pub description: &'static str,
-    pub value: SettingValue
-}
-
-//This set of types may seem limiting but it exactly matches what we can get out of Config (crate for file based configuration)
-#[allow(dead_code)]
-#[derive(Copy, Clone)]
-pub enum SettingValue
-{
-    ValString(&'static str),
-    ValBoolean(bool),
-    ValInt(i64),
-    ValFloat(f64),
-}
-
-impl SettingValue
-{
-    //These provide easy enum unwrapping when defining the structured defaults
-    //to_string already exists because of Display
-
-    pub fn to_int(&self) -> i64
-    {
-        match self
-        {
-            SettingValue::ValInt(v) => *v,
-            SettingValue::ValFloat(v) => *v as i64,
-            SettingValue::ValString(v) => panic!("Tried to get string config value as int: {}", *v),
-            SettingValue::ValBoolean(v) => if *v {1}else{0}
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn to_float(&self) -> f64
-    {
-        match self
-        {
-            SettingValue::ValInt(v) => *v as f64,
-            SettingValue::ValFloat(v) => *v,
-            SettingValue::ValString(v) => panic!("Tried to get string config value as float: {}", *v),
-            SettingValue::ValBoolean(v) => if *v {1f64}else{0f64}
-        }
-    }
-
-    pub fn to_bool(&self) -> bool
-    {
-        match self
-        {
-            SettingValue::ValBoolean(v) => *v,
-            SettingValue::ValInt(v) => *v != 0,
-            SettingValue::ValFloat(v) => *v != 0f64,
-            SettingValue::ValString(v) => panic!("Tried to get string config value as boolean: {}", *v),
-        }
-    }
-}
-
-impl Display for SettingValue
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
-    {
-        match self
-        {
-            SettingValue::ValString(v) => write!(f, "{}", v),
-            SettingValue::ValBoolean(v) => write!(f, "{}", if *v {"true"}else{"false"}),
-            SettingValue::ValInt(v) => write!(f, "{}", v),
-            SettingValue::ValFloat(v) => write!(f, "{}", v),
-        }
-    }
-}
-
-impl SettingDefinition
-{
-    /**
-    Creates a single line of TOML representing this setting. Used by the code that generates the default config file.
-
-    #Examples
-    ```
-    use redundinator::settings::*;
-    let set1 = SettingDefinition{category: "startup",  name: "working_dir", cli_short: "w", cli_long: "working_dir",       environment_variable: "APPNAME_WORKING_DIR", value: SettingValue::ValString("data"),  description: "Working directory. Will look here for the folders config,logs -- particularly the config file in config/config.toml which will be created if it doesn't exist."};
-    let set2 = SettingDefinition{category: "startup",  name: "port",        cli_short: "p", cli_long: "port",              environment_variable: "APPNAME_PORT",        value: SettingValue::ValInt(3306),       description: "Port to listen on"};
-    let toml1 = set1.to_toml();
-    let toml2 = set2.to_toml();
-    assert_eq!(toml1, "working_dir=\"data\"");
-    assert_eq!(toml2, "port=3306");
-    ```
-    */
-    pub fn to_toml(&self) -> String
-    {
-        match self.value
-        {
-            SettingValue::ValString(_) => format!("{}=\"{}\"", self.name, self.value),
-            _ => format!("{}={}", self.name, self.value)
-        }
-    }
-
-    /**
-    Creates a block of YAML representing this setting. Used by the code that set up the "clap" crate.
-    To create a valid clap config you'll also need some app-level stuff; see the example.
-
-    #Examples
-    ```
-    use redundinator::settings::*;
-    let SETTINGS_DEFN: Vec<SettingDefinition> = vec!(
-        SettingDefinition{category: "startup",  name: "working_dir", cli_short: "w", cli_long: "working_dir",       environment_variable: "APPNAME_WORKING_DIR",       value: SettingValue::ValString("data"),          description: "Working directory. Will look here for the folders config,logs -- particularly the config file in config/config.json which will be created if it doesn't exist."},
-        SettingDefinition{category: "startup",  name: "listen_addr", cli_short: "l", cli_long: "listen_addr",       environment_variable: "APPNAME_LISTEN_ADDR",       value: SettingValue::ValString("0.0.0.0:80"),    description: "ip:port to listen on. Use 0.0.0.0 for the ip to listen on all interfaces."}
-    );
-    let cmd_yaml = format!(
-        "name: AppName\nversion: dev\nabout: Description of app\nargs:\n{}",
-        SETTINGS_DEFN.iter().map(|d| d.to_yaml()).collect::<Vec<String>>().join("")
-    );
-    assert!(cmd_yaml.contains("working_dir:"));
-    ```
-    */
-    pub fn to_yaml(&self) -> String
-    {
-        format!(
-            "   - {}:\n       short: {}\n       long: {}\n       env: {}\n       help: {}\n       default_value: \"{}\"\n       takes_value: true\n",
-            self.cli_long,
-            self.cli_short,
-            self.cli_long,
-            self.environment_variable,
-            self.description,
-            self.value
-        )
-    }
-}
-
-impl Copy for SettingDefinition {}
-
-impl Clone for SettingDefinition {
-    fn clone(&self) -> Self {
-        *self
-    }
+#[derive(Parser, Serialize)]
+#[command(author, version, about, long_about = None)]
+struct ClapArgs {
+    /** Config file path -- will be created if it doesn't exist.                                                        Default: /etc/redundinator/config.json */ #[arg(short = 'c', long = "config_file_path",     env="REDUNDINATOR_CONFIG_FILE_PATH"     )]  startup_config_file_path: Option<String>,
+    /** Log path -- will be created if it doesn't exist.                                                                Default: /var/log/redundinator/        */ #[arg(short = 'l', long = "log_path",             env="REDUNDINATOR_LOG_PATH"             )]  startup_log_path: Option<String>,
+    /** Local path to store all the backed up data.                                                                     Default: /var/redundinator/backups/    */ #[arg(short = 's', long = "storage_path",         env="REDUNDINATOR_STORAGE_PATH"         )]  startup_storage_path: Option<String>,
+    /** Local path to store compressed exports ready for cloud upload.                                                  Default: /tmp/redundinator/exports/    */ #[arg(short = 'x', long = "export_path",          env="REDUNDINATOR_EXPORT_PATH"          )]  startup_export_path: Option<String>,
+    /** Local path for files recovered from exports.                                                                    Default: /tmp/redundinator/unexports/  */ #[arg(short = 'r', long = "unexport_path",        env="REDUNDINATOR_UNEXPORT_PATH"        )]  startup_unexport_path: Option<String>,
+    /** ip:port for the web interface to listen on. Use 0.0.0.0 for the ip to listen on all interfaces.                 Default: 0.0.0.0:80                    */ #[arg(short = 'w', long = "listen_addr",          env="REDUNDINATOR_LISTEN_ADDR"          )]  startup_listen_addr: Option<String>,
+    /** Username for mysqldump on localhost.                                                                                                                   */ #[arg(short = 'u', long = "mysqldump_username",   env="REDUNDINATOR_MYSQLDUMP_USERNAME"   )]  mysql_mysqldump_username: Option<String>,
+    /** Password for mysqldump on localhost.                                                                                                                   */ #[arg(short = 'p', long = "mysqldump_password",   env="REDUNDINATOR_MYSQLDUMP_PASSWORD"   )]  mysql_mysqldump_password: Option<String>,
+    /** Location of the dbxcli binary. Just "dbxcli" is fine if it's in your PATH. Otherwise, supply an absolute path.  Default: dbxcli                        */ #[arg(short = 'd', long = "dbxcli_path",          env="REDUNDINATOR_DBXCLI_PATH"          )]  dropbox_dbxcli_path: Option<String>,
+    /** Directory in your dropbox account where exports should be stored.                                               Default: Backup/redundinator           */ #[arg(short = 'b', long = "dropbox_dest_path",    env="REDUNDINATOR_DROPBOX_DEST_PATH"    )]  dropbox_dest_path: Option<String>,
+    /** ID of the google drive to use                                                                                                                          */ #[arg(short = 'v', long = "gdrive_drive_id",      env="REDUNDINATOR_GDRIVE_DRIVE_ID"      )]  gdrive_drive_id: Option<String>,
+    /** Directory in your google drive account where exports should be stored.                                          Default: Backup/redundinator           */ #[arg(short = 't', long = "gdrive_dest_path",     env="REDUNDINATOR_GDRIVE_DEST_PATH"     )]  gdrive_dest_path: Option<String>,
+    /** Google Drive API Client ID                                                                                                                             */ #[arg(short = 'i', long = "gdrive_client_id",     env="REDUNDINATOR_GDRIVE_CLIENT_ID"     )]  gdrive_client_id: Option<String>,
+    /** Google Drive API Client Secret                                                                                                                         */ #[arg(short = 'e', long = "gdrive_client_secret", env="REDUNDINATOR_GDRIVE_CLIENT_SECRET" )]  gdrive_client_secret: Option<String>,
+    /** Google Drive API Redirect URI                                                                                                                          */ #[arg(short = 'a', long = "gdrive_redirect_uri",  env="REDUNDINATOR_GDRIVE_REDIRECT_URI"  )]  gdrive_redirect_uri: Option<String>,
+    /** Google Drive API Token                                                                                                                                 */ #[arg(short = 'o', long = "gdrive_token",         env="REDUNDINATOR_GDRIVE_TOKEN"         )]  gdrive_token: Option<String>,
+    /** Google Drive API Refresh Token                                                                                                                         */ #[arg(short = 'f', long = "gdrive_refresh_token", env="REDUNDINATOR_GDRIVE_REFRESH_TOKEN" )]  gdrive_refresh_token: Option<String>,
+    /** Sync files from source host to backup storage directory.                                                                                               */ #[arg(short = 'S', long = "sync",                 env="REDUNDINATOR_SYNC"                 )]  action_sync: bool,
+    /** Export contents of backup storage directory to export directory, processed with tar+zstd|split                                                         */ #[arg(short = 'E', long = "export",               env="REDUNDINATOR_EXPORT"               )]  action_export: bool,
+    /** Extract original files from an export.                                                                                                                 */ #[arg(short = 'U', long = "unexport",             env="REDUNDINATOR_UNEXPORT"             )]  action_unexport: bool,
+    /** Upload exports to Dropbox. Before trying this make sure you're logged in to dropbox by running `dbxcli account`                                        */ #[arg(short = 'D', long = "upload_dropbox",       env="REDUNDINATOR_UPLOAD_DROPBOX"       )]  action_upload_dropbox: bool,
+    /** Upload exports to Google Drive.                                                                                                                        */ #[arg(short = 'G', long = "upload_gdrive",        env="REDUNDINATOR_UPLOAD_GDRIVE"        )]  action_upload_gdrive: bool,
+    /** Dump localhost mysql contents to flat file and include in the backup storage directory                                                                 */ #[arg(short = 'M', long = "mysql_dump",           env="REDUNDINATOR_MYSQL_DUMP"           )]  action_mysql_dump: bool,
+    /** Only do actions for the named data source. When blank, use all.                                                                                        */ #[arg(short = 'A', long = "active_source",        env="REDUNDINATOR_ACTIVE_SOURCE"        )]  action_source: bool,
 }
 
 lazy_static!
 {
-    static ref SETTINGS_DEFN: Vec<SettingDefinition> = vec!(
-        SettingDefinition{category: "startup", name: "working_dir",        cli_short: "w", cli_long: "working_dir",        environment_variable: "REDUNDINATOR_WORKING_DIR",        value: SettingValue::ValString("/etc/redundinator"),           description: "Working directory. Will look here for the folders config,logs -- particularly the config file in config/config.json which will be created if it doesn't exist."},
-        SettingDefinition{category: "startup", name: "listen_addr",        cli_short: "l", cli_long: "listen_addr",        environment_variable: "REDUNDINATOR_LISTEN_ADDR",        value: SettingValue::ValString("0.0.0.0:80"),                  description: "ip:port for the web interface to listen on. Use 0.0.0.0 for the ip to listen on all interfaces."},
-        SettingDefinition{category: "startup", name: "storage_path",       cli_short: "s", cli_long: "storage_path",       environment_variable: "REDUNDINATOR_STORAGE_PATH",       value: SettingValue::ValString("/var/redundinator/backups/"),  description: "Local path to store all the backed up data"},
-        SettingDefinition{category: "startup", name: "export_path",        cli_short: "x", cli_long: "export_path",        environment_variable: "REDUNDINATOR_EXPORT_PATH",        value: SettingValue::ValString("/tmp/redundinator/exports/"),  description: "Local path to store compressed exports ready for cloud upload"},
-        SettingDefinition{category: "startup", name: "unexport_path",      cli_short: "r", cli_long: "unexport_path",      environment_variable: "REDUNDINATOR_UNEXPORT_PATH",      value: SettingValue::ValString("/tmp/redundinator/unexports/"),description: "Local path for files recovered from exports"},
-        SettingDefinition{category: "sources", name: "sources",            cli_short: "c", cli_long: "sources",            environment_variable: "REDUNDINATOR_SOURCES",            value: SettingValue::ValString(""),                            description: "Definition of data sources to be backed up"},
-        SettingDefinition{category: "mysql",   name: "mysqldump_username", cli_short: "u", cli_long: "mysqldump_username", environment_variable: "REDUNDINATOR_MYSQLDUMP_USERNAME", value: SettingValue::ValString(""),                            description: "Username for mysqldump on localhost"},
-        SettingDefinition{category: "mysql",   name: "mysqldump_password", cli_short: "p", cli_long: "mysqldump_password", environment_variable: "REDUNDINATOR_MYSQLDUMP_PASSWORD", value: SettingValue::ValString(""),                            description: "Password for mysqldump on localhost"},
-        SettingDefinition{category: "dropbox", name: "dbxcli_path",        cli_short: "d", cli_long: "dbxcli_path",        environment_variable: "REDUNDINATOR_DBXCLI_PATH",        value: SettingValue::ValString("dbxcli"),                      description: "Location of the dbxcli binary. You can leave this as just dbxcli if it's in your PATH. Otherwise, supply an absolute path here."},
-        SettingDefinition{category: "dropbox", name: "dest_path",          cli_short: "b", cli_long: "dropbox_dest_path",  environment_variable: "REDUNDINATOR_DROPBOX_DEST_PATH",  value: SettingValue::ValString("Backup/redundinator"),         description: "Directory in your dropbox account where exports should be stored"},
-
-        SettingDefinition{category: "gdrive", name: "dest_path",           cli_short: "t", cli_long: "gdrive_dest_path",   environment_variable: "REDUNDINATOR_GDRIVE_DEST_PATH",  value: SettingValue::ValString("Backup/redundinator"),          description: "Directory in your google drive account where exports should be stored"},
-        SettingDefinition{category: "gdrive", name: "managed_dir",         cli_short: "m", cli_long: "gdrive_managed_dir", environment_variable: "REDUNDINATOR_GDRIVE_MANAGED_DIR",value: SettingValue::ValString("/var/redundinator/gdrive_mgd/"),description: "Directory where you ran `drive init` to connect it to your google drive."},
-
-        SettingDefinition{category: "action", name: "sync",           cli_short: "S", cli_long: "sync",           environment_variable: "REDUNDINATOR_SYNC",           value: SettingValue::ValBoolean(false), description: "Sync files from source host to backup storage folder"},
-        SettingDefinition{category: "action", name: "export",         cli_short: "E", cli_long: "export",         environment_variable: "REDUNDINATOR_EXPORT",         value: SettingValue::ValBoolean(false), description: "export contents of backup storage to export folder, processed with tar+zstd|split"},
-        SettingDefinition{category: "action", name: "unexport",       cli_short: "U", cli_long: "unexport",       environment_variable: "REDUNDINATOR_EXPORT",         value: SettingValue::ValBoolean(false), description: "extract original files from an export"},
-        SettingDefinition{category: "action", name: "upload_dropbox", cli_short: "D", cli_long: "upload_dropbox", environment_variable: "REDUNDINATOR_UPLOAD_DROPBOX", value: SettingValue::ValBoolean(false), description: "Upload to Dropbox. Before trying this make sure you're logged in to dropbox by running `dbxcli account`"},
-        SettingDefinition{category: "action", name: "upload_gdrive",  cli_short: "G", cli_long: "upload_gdrive",  environment_variable: "REDUNDINATOR_UPLOAD_GDRIVE",  value: SettingValue::ValBoolean(false), description: "Upload to Google Drive."},
-        SettingDefinition{category: "action", name: "mysql_dump",     cli_short: "M", cli_long: "mysql_dump",     environment_variable: "REDUNDINATOR_MYSQL_DUMP",     value: SettingValue::ValBoolean(false), description: "Enable to dump localhost mysql contents to flat file and include in the backup storage folder"},
-        SettingDefinition{category: "action", name: "source",         cli_short: "C", cli_long: "active_source",  environment_variable: "REDUNDINATOR_ACTIVE_SOURCE",  value: SettingValue::ValString(""),     description: "Only do actions for the named data source. If blank, use all."}
-    );
-
-    static ref SETTINGS_DEFN_MAP: HashMap<&'static str, HashMap<&'static str, &'static SettingDefinition>> = Settings::categorize_defns(&SETTINGS_DEFN);
-
     pub static ref SETTINGS: Settings = Settings::load();
 
     static ref DEFAULT_SETTINGS: Settings = Settings{
         startup: Startup
         {
-            working_dir:  SETTINGS_DEFN_MAP["startup"]["working_dir"].value.to_string(),
-            listen_addr:  SETTINGS_DEFN_MAP["startup"]["listen_addr"].value.to_string(),
-            storage_path: SETTINGS_DEFN_MAP["startup"]["storage_path"].value.to_string(),
-            export_path:  SETTINGS_DEFN_MAP["startup"]["export_path"].value.to_string(),
-            unexport_path:SETTINGS_DEFN_MAP["startup"]["unexport_path"].value.to_string()
+            config_file_path: String::from("/etc/redundinator/config.json"),
+            log_path:         String::from("/var/log/redundinator/"),
+            storage_path:     String::from("/var/redundinator/backups/"),
+            export_path:      String::from("/tmp/redundinator/exports/"),
+            unexport_path:    String::from("/tmp/redundinator/unexports/"),
+            listen_addr:      String::from("0.0.0.0:80")
         },
         mysql: Mysql
         {
-            mysqldump_username: SETTINGS_DEFN_MAP["mysql"]["mysqldump_username"].value.to_string(),
-            mysqldump_password: SETTINGS_DEFN_MAP["mysql"]["mysqldump_password"].value.to_string()
+            mysqldump_username: String::from(""),
+            mysqldump_password: String::from("")
         },
         dropbox: Dropbox
         {
-            dbxcli_path: SETTINGS_DEFN_MAP["dropbox"]["dbxcli_path"].value.to_string(),
-            dest_path:   SETTINGS_DEFN_MAP["dropbox"]["dest_path"].value.to_string(),
+            dbxcli_path: String::from("dbxcli"),
+            dest_path:   String::from("Backup/redundinator"),
         },
         gdrive: GDrive
         {
-            dest_path:   SETTINGS_DEFN_MAP["gdrive"]["dest_path"].value.to_string(),
-            managed_dir: SETTINGS_DEFN_MAP["gdrive"]["managed_dir"].value.to_string()
+            drive_id:      String::from(""),
+            dest_path:     String::from("Backup/redundinator"),
+            client_id:     String::from(""),
+            client_secret: String::from(""),
+            redirect_uri:  String::from(""),
+            token:         String::from(""),
+            refresh_token: String::from(""),
         },
         sources: vec![
             (String::from("localhost"),         Source{hostname: String::from("localhost"), paths: vec!(String::from("/home/")),        paths_exclude: Vec::new(), method: SyncMethod::RsyncLocal }),
@@ -465,65 +336,15 @@ lazy_static!
         ].into_iter().collect(),
         action: Action
         {
-            sync:           SETTINGS_DEFN_MAP["action"]["sync"].value.to_bool(),
-            export:         SETTINGS_DEFN_MAP["action"]["export"].value.to_bool(),
-            unexport:       SETTINGS_DEFN_MAP["action"]["unexport"].value.to_bool(),
-            upload_dropbox: SETTINGS_DEFN_MAP["action"]["upload_dropbox"].value.to_bool(),
-            upload_gdrive:  SETTINGS_DEFN_MAP["action"]["upload_gdrive"].value.to_bool(),
-            mysql_dump:     SETTINGS_DEFN_MAP["action"]["mysql_dump"].value.to_bool(),
-            source:         SETTINGS_DEFN_MAP["action"]["source"].value.to_string()
+            sync:           false,
+            export:         false,
+            unexport:       false,
+            upload_dropbox: false,
+            upload_gdrive:  false,
+            mysql_dump:     false,
+            source:         String::from("")
         }
     };
-
-    static ref DEFAULT_LOG4RS: String = String::from(r#"refresh_rate: 60 seconds
-appenders:
-  stdout:
-    kind: console
-    target: stdout
-  stderr:
-    kind: console
-    target: stderr
-  main:
-    kind: file
-    path: "log/main.log"
-    encoder:
-      pattern: "{d} [{P}:{I}] {l} - {m}{n}"
-  stderrlogger:
-    kind: file
-    path: "log/stderr.log"
-    encoder:
-      pattern: "{d} [{P}:{I}] - {m}{n}"
-  stdoutlogger:
-    kind: file
-    path: "log/stdout.log"
-    encoder:
-      pattern: "{d} [{P}:{I}] - {m}{n}"
-  cmdlogger:
-    kind: file
-    path: "log/cmd.log"
-    encoder:
-      pattern: "{d} [{P}:{I}] - {m}{n}"
-root:
-  level: info
-  appenders:
-    - main
-    - stdout
-loggers:
-  stdoutlog:
-    level: info
-    appenders:
-      - stdoutlogger
-    additive: false
-  cmdlog:
-    level: info
-    appenders:
-      - cmdlogger
-    additive: false
-  stderrlog:
-    level: info
-    appenders:
-      - stderrlogger
-    additive: false"#);
 }
 
 /*
@@ -543,16 +364,10 @@ mod tests
         let _config = Settings::load();
     }
 
-    // Settings::categorize_defns()
+    //This test from the Clap docs ensures consistency of the cli config structure
     #[test]
-    fn categorize()
-    {
-        let defns: Vec<SettingDefinition> = vec!(
-            SettingDefinition{category: "startup",  name: "working_dir", cli_short: "w", cli_long: "working_dir",   environment_variable: "APPNAME_WORKING_DIR",       value: SettingValue::ValString("data"),          description: "Working directory."},
-            SettingDefinition{category: "startup",  name: "listen_addr", cli_short: "l", cli_long: "listen_addr",   environment_variable: "APPNAME_LISTEN_ADDR",       value: SettingValue::ValString("0.0.0.0:80"),    description: "ip:port to listen on."}
-        );
-        let dmap: HashMap<&str, HashMap<&str, &SettingDefinition>> = Settings::categorize_defns(&defns);
-    
-        assert_eq!(dmap["startup"]["working_dir"].value.to_string(), "data");
+    fn verify_cli() {
+        use clap::CommandFactory;
+        ClapArgs::command().debug_assert()
     }
 }

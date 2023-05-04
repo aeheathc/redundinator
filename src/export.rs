@@ -11,8 +11,8 @@ pub fn export(source_name: &str)
 
     let now = chrono::Utc::now().timestamp();
     let export_path = &SETTINGS.startup.export_path;
-    let source = format!(r#"{}/sources/{}"#, &SETTINGS.startup.storage_path, source_name);
-    let dest = format!(r#"{}/{}_{}"#, export_path, source_name, now);
+    let source = format!(r#"{}/sources/{source_name}"#, &SETTINGS.startup.storage_path);
+    let dest = format!(r#"{export_path}/{source_name}_{now}"#);
 
     if let Err(e) = fs::create_dir_all(export_path)
     {
@@ -20,7 +20,7 @@ pub fn export(source_name: &str)
         return;
     }
 
-    let cmd_export = format!(r#"tar --zstd -C {} -cf - . | split -db 100G - "{}.tar.zst.""#, source, dest);
+    let cmd_export = format!(r#"tar --zstd -C {source} -cf - . | split -db 100G - "{dest}.tar.zst.""#);
     info!(target: "cmdlog", "{}", cmd_export);
     match run_script::run(&cmd_export, &Vec::new(), &ScriptOptions::new())
     {
@@ -47,7 +47,7 @@ pub fn unexport(source_name: &str)
 {
     info!("Beginning unexport (cat|untar+zstd) for source: {}", source_name);
 
-    let target_timestamp = match latest_export_ts(&source_name)
+    let target_timestamp = match latest_export_ts(source_name)
     {
         Some(t) => t,
         None =>{
@@ -57,8 +57,8 @@ pub fn unexport(source_name: &str)
     };
 
     let export_path = &SETTINGS.startup.export_path;
-    let source = format!(r#"{}/{}_{}.tar.zst."#, export_path, source_name, target_timestamp);
-    let dest = format!(r#"{}/sources/{}/"#, &SETTINGS.startup.unexport_path, source_name);
+    let source = format!(r#"{export_path}/{source_name}_{target_timestamp}.tar.zst."#);
+    let dest = format!(r#"{}/sources/{source_name}/"#, &SETTINGS.startup.unexport_path);
     
     if let Err(e) = fs::create_dir_all(&dest)
     {
@@ -66,7 +66,7 @@ pub fn unexport(source_name: &str)
         return;
     }
 
-    let cmd_unexport = format!(r#"cat {}* | tar --zstd -C {} -xf -"#, source, dest);
+    let cmd_unexport = format!(r#"cat {source}* | tar --zstd -C {dest} -xf -"#);
     info!(target: "cmdlog", "{}", cmd_unexport);
     match run_script::run(&cmd_unexport, &Vec::new(), &ScriptOptions::new())
     {

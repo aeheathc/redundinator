@@ -9,7 +9,7 @@ use crate::latest_export_ts;
 
 pub fn list_files(source_name: &str) -> Vec<String>
 {
-    let target_timestamp = match latest_export_ts(&source_name)
+    let target_timestamp = match latest_export_ts(source_name)
     {
         Some(t) => t,
         None =>{
@@ -18,7 +18,7 @@ pub fn list_files(source_name: &str) -> Vec<String>
         }
     };
 
-    let glob_str = format!("{}/{}_{}.tar.zst.*", &SETTINGS.startup.export_path, &source_name, target_timestamp);
+    let glob_str = format!("{}/{}_{target_timestamp}.tar.zst.*", &SETTINGS.startup.export_path, &source_name);
 
     match glob(&glob_str)
     {

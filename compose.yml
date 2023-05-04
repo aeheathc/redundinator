@@ -1,0 +1,75 @@
+services:
+  server:
+    image: rust
+    ports:
+      - "8080:80"
+      - "8443:443"
+      - "2220:22"
+    networks:
+      - mynet
+    hostname: server
+    working_dir: /app
+    command: sh -c "apt-get update && apt-get -y install rsync && apt-get install zstd && cargo build --release && /app/target/release/redundinator_web && fg" 
+    volumes:
+      - type: bind
+        source: ./
+        target: /app
+      - type: bind
+        source: ./data/dockerVolumes/server/
+        target: /home/files
+    environment:
+      REDUNDINATOR_CONFIG_FILE_PATH: /app/data/config.json
+      REDUNDINATOR_LOG_PATH: /app/data/log
+      REDUNDINATOR_STORAGE_PATH: /app/data/serverFiles/backupStorage
+      REDUNDINATOR_EXPORT_PATH: /app/data/serverFiles/exports
+      REDUNDINATOR_UNEXPORT_PATH: /app/data/serverFiles/unexports
+
+  client1:
+    image: vimagick/rsyncd
+    networks:
+      - mynet
+    hostname: client1
+    ports:
+      - "2221:22"
+    volumes:
+      - type: bind
+        source: ./data/dockerVolumes/client1/
+        target: /home/files
+      - type: bind
+        source: ./data/dockerConfigs/rsyncd.conf
+        target: /etc/rsyncd.conf
+      - type: bind
+        source: ./data/dockerConfigs/rsyncd.secrets
+        target: /etc/rsyncd.secrets
+
+  client2:
+    image: alpine
+    networks:
+      - mynet
+    hostname: client2
+    ports:
+      - "2222:22"
+    volumes:
+      - type: bind
+        source: ./data/dockerVolumes/client2/
+        target: /home/files
+    command: tail -f /dev/null
+
+  client3:
+    image: alpine
+    networks:
+      - mynet
+    hostname: client3
+    ports:
+      - "2223:22"
+    volumes:
+      - type: bind
+        source: ./data/dockerVolumes/client3_main/
+        target: /home/files
+      - type: bind
+        source: ./data/dockerVolumes/client3_hugefiles/
+        target: /mnt/archive/files
+    command: tail -f /dev/null
+
+networks:
+  mynet: {}

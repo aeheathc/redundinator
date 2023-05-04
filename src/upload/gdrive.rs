@@ -1,12 +1,151 @@
-use log::{error, /*warn,*/ info/*, debug, trace, log, Level*/};
-use run_script::{ScriptOptions, types::IoOptions};
-use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
+use futures::executor;
+use google_drive::{Client, types::{File, FileCapabilities}};
+use log::{/*error, warn,*/ info/*, debug, trace, log, Level*/};
+use md5::{Md5, Digest};
+use std::{fs, io, path::Path};
 
 use crate::settings::SETTINGS;
-use crate::shell::shell_and_log;
 use crate::upload::list_files;
+
+/* Crate google_drive: current WIP code
+
+pub fn gdrive_up(source_name: &str)
+{
+    info!("Starting Google Drive upload of exports for source: {}", source_name);
+    let dest = &SETTINGS.gdrive.dest_path;
+    let drive = Client::new(
+        String::from(&SETTINGS.gdrive.client_id),
+        String::from(&SETTINGS.gdrive.client_secret),
+        String::from(&SETTINGS.gdrive.redirect_uri),
+        String::from(&SETTINGS.gdrive.token),
+        String::from(&SETTINGS.gdrive.refresh_token)
+    );
+    let file_client = drive.files();
+    let cap = FileCapabilities{
+        can_add_children: None,
+        can_add_folder_from_another_drive: None,
+        can_add_my_drive_parent: None,
+        can_change_copy_requires_writer_permission: None,
+        can_change_security_update_enabled: None,
+        can_change_viewers_can_copy_content: None,
+        can_comment: Some(true),
+        can_copy: None,
+        can_delete: Some(true),
+        can_delete_children: Some(true),
+        can_download: Some(true),
+        can_edit: Some(true),
+        can_list_children: Some(true),
+        can_modify_content: Some(true),
+        can_modify_content_restriction: Some(true),
+        can_move_children_out_of_drive: None,
+        can_move_children_out_of_team_drive: None,
+        can_move_children_within_drive: None,
+        can_move_children_within_team_drive: None,
+        can_move_item_into_team_drive: None,
+        can_move_item_out_of_drive: None,
+        can_move_item_out_of_team_drive: None,
+        can_move_item_within_drive: None,
+        can_move_item_within_team_drive: None,
+        can_move_team_drive_item: None,
+        can_read_drive: Some(true),
+        can_read_revisions: Some(true),
+        can_read_team_drive: None,
+        can_remove_children: Some(true),
+        can_remove_my_drive_parent: None,
+        can_rename: None,
+        can_share: Some(false),
+        can_trash: None,
+        can_trash_children: None,
+        can_untrash: None
+    };
+    for filename in list_files(source_name)
+    {
+        //get file extension
+        let ext = match Path::new(&filename).extension() {Some(e)=>String::from(e.to_string_lossy()), None=>String::from("")};
+        //get file md5 hash
+        let mut file = fs::File::open(&filename).expect("Failed to open file");
+        let mut hasher = Md5::new();
+        io::copy(&mut file, &mut hasher).expect("Failed to hash file");
+        let file_md5: String = format!("{:x}", hasher.finalize());
+        //get file length
+        let file_length = file.metadata().expect("Couldn't get metadata of file").len() as i64;
+
+        let file = File{
+            app_properties: String::from(""),
+            capabilities: Some(cap.clone()),
+            content_hints: None,
+            content_restrictions: vec![],
+            copy_requires_writer_permission: Some(false),
+            created_time: None,
+            description: String::from("backup archive"),
+            drive_id: String::from(""),
+            explicitly_trashed: None,
+            export_links: String::from(""),
+            file_extension: ext.clone(),
+            folder_color_rgb: String::from("#FFFFFF"),
+            full_file_extension: format!("tar.zst.{}", &ext),
+            has_augmented_permissions: None,
+            has_thumbnail: Some(false),
+            head_revision_id: String::from(""),
+            icon_link: String::from(""),
+            id: String::from(""),
+            image_media_metadata: None,
+            is_app_authorized: Some(true),
+            kind: String::from("drive#file"),
+            last_modifying_user: None,
+            link_share_metadata: None,
+            md_5_checksum: file_md5,
+            mime_type: String::from("application/octet-stream"),
+            modified_by_me: None,
+            modified_by_me_time: None,
+            modified_time: None,
+            name: filename.clone(),
+            original_filename: filename.clone(),
+            owned_by_me: Some(true),
+            owners: vec![],
+            parents: vec![],
+            permission_ids: vec![],
+            permissions: vec![],
+            properties: String::from(""),
+            quota_bytes_used: file_length,
+            resource_key: String::from(""),
+            shared: Some(false),
+            shared_with_me_time: None,
+            sharing_user: None,
+            shortcut_details: None,
+            size: file_length,
+            spaces: vec![String::from("drive")],
+            starred: None,
+            team_drive_id: String::from(""),
+            thumbnail_link: String::from(""),
+            thumbnail_version: 0,
+            trashed: Some(false),
+            trashed_time: None,
+            trashing_user: None,
+            version: 0,
+            video_media_metadata: None,
+            viewed_by_me: None,
+            viewed_by_me_time: None,
+            viewers_can_copy_content: None,
+            web_content_link: String::from(""),
+            web_view_link: String::from(""),
+            writers_can_share: None
+        };
+        executor::block_on(file_client.create(false, "published", false, "en", true, false, false, &file)).expect("Couldn't upload file");
+    }
+}
+*/
+
+/*
+Command line utility "drive" -- formerly working code
+Why it won't work: This utility is no longer maintained and doesn't work with current Google APIs
+
+use run_script::{ScriptOptions, types::IoOptions};
+
+use std::fs;
+use std::path::PathBuf;
+
+use crate::shell::shell_and_log;
 use crate::upload::dir_symlink;
 
 pub fn gdrive_up(source_name: &str)
@@ -35,11 +174,13 @@ pub fn gdrive_up(source_name: &str)
     let cmd_path: PathBuf = [managed].iter().collect();
     let cmd_options = ScriptOptions{
         runner: Some("/bin/bash".to_string()),
+        runner_args: None,
         working_directory: Some(cmd_path),
         input_redirection: IoOptions::Inherit,
         output_redirection: IoOptions::Pipe,
         exit_on_error: false,
-        print_commands: false
+        print_commands: false,
+        env_vars: None
     };
     let dest_with_sym = format!("{}/{}", dest, symlink_name);
 
@@ -71,9 +212,10 @@ pub fn gdrive_up(source_name: &str)
 
     info!("Finished gdrive_up for source: {}", source_name);
 }
+*/
 
 /*
-Crate google_drive -- abandoned WIP code
+Crate google_drive (old) -- abandoned WIP code
 Why it won't work: It authenticates fine but at the command "list drives" the crate spews raw errors from the Google API
 talking about invalid values for a parameter the crate does not expose, so I assume the crate is just bugged.
 

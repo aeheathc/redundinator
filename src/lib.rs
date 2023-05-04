@@ -2,11 +2,10 @@ extern crate clap;
 extern crate enquote;
 #[macro_use]
 extern crate lazy_static;
-#[macro_use]
 extern crate serde;
 extern crate uuid;
-extern crate yaml_rust;
 
+pub mod action_queue;
 pub mod dispatch;
 pub mod export;
 pub mod mysql;
@@ -18,13 +17,14 @@ pub mod upload;
 
 use crate::settings::SETTINGS;
 use glob::glob;
+use lazy_static::lazy_static;
 use log::{error, /*warn, info, debug, trace, log, Level*/};
 use regex::Regex;
 
 
 pub fn latest_export_ts(name: &str) -> Option<i64>
 {
-    let glob_str = format!("{}/{}_*.tar.zst.*", &SETTINGS.startup.export_path, name);
+    let glob_str = format!("{}/{name}_*.tar.zst.*", &SETTINGS.startup.export_path);
     let mut latest: Option<i64> = None;
     let matches = match glob(&glob_str)
     {
