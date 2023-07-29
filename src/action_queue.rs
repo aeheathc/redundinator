@@ -1,14 +1,14 @@
 use log::{/*error, warn, info, debug,*/ trace, /*log, Level*/};
 use std::{collections::VecDeque, thread, sync::Mutex, time::Duration, ops::DerefMut};
-use crate::settings::{Action};
+use crate::settings::{Action, Settings};
 use crate::dispatch::dispatch;
 
-pub fn start_consumer()
+pub fn start_consumer(settings: Settings)
 {
-    thread::spawn(|| { consumer(); });
+    thread::spawn(|| { consumer(settings); });
 }
 
-pub fn consumer()
+pub fn consumer(settings: Settings)
 {
     let mut first_iter = true;
     loop{
@@ -42,7 +42,15 @@ pub fn consumer()
         };
         if let Some(a) = action
         {
-            dispatch(&a);
+            let oneoff_settings = Settings{
+                startup: settings.startup.clone(),
+                sources: settings.sources.clone(),
+                mysql: settings.mysql.clone(),
+                action: a,
+                dropbox: settings.dropbox.clone(),
+                gdrive: settings.gdrive.clone()
+            };
+            dispatch(&oneoff_settings);
             if let Ok(mut g) = CURRENT_ACTION.try_lock()
             {
                 *g = None;

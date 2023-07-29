@@ -135,133 +135,162 @@ pub struct Settings
 
 impl Settings
 {
-    /**
-    Load configuration for app and logger from sources.
-
-    - Load app & logger config, merging values from all sources (cmd, env, file, defaults) with appropriate priority
-    - Store app config in a lazy_static ref settings::SETTINGS
-    - Set the working directory of the app to what is configured, so relative paths work correctly.
-    - If either config file is missing, write a new one with defaults.
-    - Start up logger.
-
-    # Panics
-    This function makes every attempt to recover from minor issues, but any unrecoverable problem will result in a panic.
-    After all, the app can't safely do much of anything without the info it returns, and even the logger isn't available until the very end.
-    Possible unrecoverables include CWD change error, filesystem errors, and config parse errors.
-
-    # Undefined behavior
-    This should only be called once. Additional calls may result in issues with the underlying config and logger libraries.
-
-    */
-    fn load() -> Self
+    pub fn load() -> Settings
     {
-        /* Although the main utility the Config crate provides to us is loading the config file, we also let it handle 
-           combining all the config sources while resolving priority, and doing the final deserialization to the Settings type.
-        */
-
-        /* Make a version of the default settings where sources is empty. This is only necessary because `config` will MERGE HashMaps
-           from multiple config sources together, instead of having one override the other like most data types. If they fix that behavior
-           then we can remove this and use DEFAULT_SETTINGS directly.
-        */
         let mut default_without_sources = DEFAULT_SETTINGS.clone();
         default_without_sources.sources = HashMap::new();
-        let serialized_default_config_without_sources = serde_json::to_string(&default_without_sources).expect("Couldn't serialize default config");
-        
-        // using "pretty" because, if the config file is missing and we need to write it out, this will be used as the contents
-        let serialized_default_config = serde_json::to_string_pretty(&DEFAULT_SETTINGS.clone()).expect("Couldn't serialize default config");
-        
-
-        // Load command-line arguments. For those unspecified, load environment variables.
-        let cmd_args = ClapArgs::parse();
-
-        // ensure existence of dir for config file
-        let config_file_path = match &cmd_args.startup_config_file_path {Some(s) => String::from(s), None => String::from(&DEFAULT_SETTINGS.startup.config_file_path)};
-        fs::create_dir_all(PathBuf::from(&config_file_path).parent().expect("Couldn't determine dir of specified config file")).expect("Couldn't ensure existence of directory containing config file");
-    
-        // initialize Config, give it the defaults, and point it at the config file
-        let mut file_config = Config::builder()
-            .add_source(File::from_str(&serialized_default_config_without_sources, FileFormat::Json))
-            .add_source(File::with_name(&config_file_path));
-
-        // Pass the (command line args + env vars) to Config as overrides
-        if let serde_json::Value::Object(cmd) = serde_json::to_value(cmd_args).expect("Couldn't serialize cmd/env args")
-        {
-            for (name, val) in cmd
-            {
-                let name_path = name.replacen('_', ".", 1);
-                match val {
-                    Value::Null => {},
-                    Value::Bool(bool_val ) => {if bool_val { file_config = file_config.set_override(name_path, true             ).expect("Couldn't read cmd/env arg");}},
-                    Value::Number(num_val) => {              file_config = file_config.set_override(name_path, num_val.as_i64() ).expect("Couldn't read cmd/env arg"); },
-                    Value::String(str_val) => {              file_config = file_config.set_override(name_path, str_val          ).expect("Couldn't read cmd/env arg"); },
-                    _ => {panic!("Invalid value for cmd arg {name}");}
-                }
-            }
-        }else{
-            panic!("Invalid serialization of cmd/env args");
-        }
-
-        //Resolve all the config sources and get our config
-        /*The build function makes file_config unusable afterward, but we want to be able to retry
-          it if it fails for a reason we think we can correct, so we run build on a clone.
-        */
-        let config = match file_config.clone().build()
-        {
-            Ok(c) => c,
-            Err(ce) =>
-            {
-                match ce //determine reason for failure
-                {
-                    ConfigError::Frozen                                       => panic!("Couldn't load config because it was already frozen/deserialized"),
-                    ConfigError::NotFound(prop)                               => panic!("Couldn't load config because the following thing was 'not found': {prop}"),
-                    ConfigError::PathParse(ek)                                => panic!("Couldn't load config because the 'path could not be parsed' due to the following: {}", ek.description()),
-                    ConfigError::FileParse{uri: _, cause: _}                  => panic!("Couldn't load config because of a parser failure."),
-                    ConfigError::Type{origin:_,unexpected:_,expected:_,key:_} => panic!("Couldn't load config because of a type conversion issue"),
-                    ConfigError::Message(e_str)                               => panic!("Couldn't load config because of the following: {e_str}"),
-                    ConfigError::Foreign(_)                                   => {
-                        //looks like the file is missing, attempt to write new file with defaults then load it. If this also fails then bail
-                        if let Err(e) = fs::write(config_file_path, serialized_default_config){
-                            panic!("Couldn't read main config file or write default main config file: {e}");
-                        }
-                        file_config.build().expect("Still had a problem reading main config file after writing it out")
-                    }
-                }
-            }
-        };
-       
-        // Export config to Settings struct
-        let settings: Settings = match config.try_deserialize()
-        {
-            Err(msg) => {let e = format!("Couldn't export config: {msg}"); error!("{}",e); panic!("{}",e);},
-            Ok(s) => {
-                s
-            }
-        };
-
-        // setup logger
-        fs::create_dir_all(String::from(&settings.startup.log_path)).expect("Couldn't ensure existence of log dir");
-        let appender_stdout       = ConsoleAppender::builder().build();
-        let appender_stderr       = ConsoleAppender::builder().target(Target::Stderr).build();
-        let appender_main         = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] {l} - {m}{n}"))).build(format!("{}/main.log",   &settings.startup.log_path)).expect("Couldn't open main log file.");
-        let appender_stdoutlogger = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] - {m}{n}"    ))).build(format!("{}/stdout.log", &settings.startup.log_path)).expect("Couldn't open log file for stdout of external commands.");
-        let appender_stderrlogger = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] - {m}{n}"    ))).build(format!("{}/stderr.log", &settings.startup.log_path)).expect("Couldn't open log file for stderr of external commands.");
-        let appender_cmdlogger    = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] - {m}{n}"    ))).build(format!("{}/cmd.log",    &settings.startup.log_path)).expect("Couldn't open log file for external commands.");
-        let logger_setup = log4rs::config::Config::builder()
-            .appender(log4rs::config::Appender::builder().build("stdout",       Box::new(appender_stdout)))
-            .appender(log4rs::config::Appender::builder().build("stderr",       Box::new(appender_stderr)))
-            .appender(log4rs::config::Appender::builder().build("main",         Box::new(appender_main)))
-            .appender(log4rs::config::Appender::builder().build("stdoutlogger", Box::new(appender_stdoutlogger)))
-            .appender(log4rs::config::Appender::builder().build("stderrlogger", Box::new(appender_stderrlogger)))
-            .appender(log4rs::config::Appender::builder().build("cmdlogger",    Box::new(appender_cmdlogger)))
-            .logger(log4rs::config::Logger::builder().appender("stdoutlogger").additive(false).build("stdoutlog", LevelFilter::Info))
-            .logger(log4rs::config::Logger::builder().appender("stderrlogger").additive(false).build("stderrlog", LevelFilter::Info))
-            .logger(log4rs::config::Logger::builder().appender("cmdlogger"   ).additive(false).build("cmdlog",    LevelFilter::Info))
-            .build(log4rs::config::Root::builder().appender("stdout").appender("main").build(LevelFilter::Info))
-            .expect("Couldn't build logger setup.");
-        log4rs::init_config(logger_setup).expect("Couldn't initialize logger.");
-
-        settings
+        crate::settings::load::<Settings, ClapArgs>(&DEFAULT_SETTINGS, &default_without_sources)
     }
+}
+
+pub trait SettingsType
+{
+    fn get_log_dir_path(&self) -> String;
+    fn get_config_file_path(&self) -> String;
+}
+
+impl SettingsType for Settings
+{
+    fn get_log_dir_path(&self) -> String { self.startup.log_path.clone() }
+    fn get_config_file_path(&self) -> String { self.startup.config_file_path.clone() }
+}
+
+pub trait ClapArgsType
+{
+    fn get_config_file_path(&self) -> Option<String>;
+}
+
+impl ClapArgsType for ClapArgs
+{
+    fn get_config_file_path(&self) -> Option<String> { self.startup_config_file_path.clone() }
+}
+
+/**
+Load configuration for app and logger from sources.
+
+- Load app & logger config, merging values from all sources (cmd, env, file, defaults) with appropriate priority
+- Return app config
+- If either config file is missing, write a new one with defaults.
+- Start up logger.
+
+# Arguments
+* `default_settings` - The default settings as you'd like to see them in the default config file.
+* `default_settings_with_maps_blanked` - A version of the default settings where any HashMaps are empty. Used as the base for the actual heirarchy of values that go into what gets returned. This is only necessary because `config` will MERGE HashMaps from multiple config sources together, instead of having one override the other like most data types. If they fix that behavior (or if we start resolving the order in this code instead of relying on Config's behavior) then we can remove this arg and use default_settings for all cases.
+
+# Panics
+This function makes every attempt to recover from minor issues, but any unrecoverable problem will result in a panic.
+After all, the app can't safely do much of anything without the info it returns, and even the logger isn't available until the very end.
+Possible unrecoverables include CWD change error, filesystem errors, and config parse errors.
+
+# Undefined behavior
+This should only be called once. Additional calls may result in issues with the underlying config and logger libraries.
+
+*/
+pub fn load<'a, SettingsGeneric, ClapArgsGeneric>(default_settings: &SettingsGeneric, default_settings_with_maps_blanked: &SettingsGeneric) -> SettingsGeneric
+where
+    SettingsGeneric: Serialize + Deserialize<'a> + Clone + SettingsType,
+    ClapArgsGeneric: Parser + Serialize + ClapArgsType
+{
+    /* Although the main utility the Config crate provides to us is loading the config file, we also let it handle 
+        combining all the config sources while resolving priority, and doing the final deserialization to the Settings type.
+    */
+
+    let serialized_default_config_with_maps_blanked = serde_json::to_string(&default_settings_with_maps_blanked).expect("Couldn't serialize default config");
+    
+    // using "pretty" because, if the config file is missing and we need to write it out, this will be used as the contents
+    let serialized_default_config = serde_json::to_string_pretty(&default_settings.clone()).expect("Couldn't serialize default config");
+
+    // Load command-line arguments. For those unspecified, load environment variables.
+    let cmd_args = ClapArgsGeneric::parse();
+
+    // ensure existence of dir for config file
+    let config_file_path = match &cmd_args.get_config_file_path() {Some(s) => String::from(s), None => String::from(&default_settings.get_config_file_path())};
+    fs::create_dir_all(PathBuf::from(&config_file_path).parent().expect("Couldn't determine dir of specified config file")).expect("Couldn't ensure existence of directory containing config file");
+
+    // initialize Config, give it the defaults, and point it at the config file
+    let mut file_config = Config::builder()
+        .add_source(File::from_str(&serialized_default_config_with_maps_blanked, FileFormat::Json))
+        .add_source(File::with_name(&config_file_path));
+
+    // Pass the (command line args + env vars) to Config as overrides
+    if let serde_json::Value::Object(cmd) = serde_json::to_value(cmd_args).expect("Couldn't serialize cmd/env args")
+    {
+        for (name, val) in cmd
+        {
+            let name_path = name.replacen('_', ".", 1);
+            match val {
+                Value::Null => {},
+                Value::Bool(bool_val ) => {if bool_val { file_config = file_config.set_override(name_path, true             ).expect("Couldn't read cmd/env arg");}},
+                Value::Number(num_val) => {              file_config = file_config.set_override(name_path, num_val.as_i64() ).expect("Couldn't read cmd/env arg"); },
+                Value::String(str_val) => {              file_config = file_config.set_override(name_path, str_val          ).expect("Couldn't read cmd/env arg"); },
+                _ => {panic!("Invalid value for cmd arg {name}");}
+            }
+        }
+    }else{
+        panic!("Invalid serialization of cmd/env args");
+    }
+
+    //Resolve all the config sources and get our config
+    /*The build function makes file_config unusable afterward, but we want to be able to retry
+        it if it fails for a reason we think we can correct, so we run build on a clone.
+    */
+    let config = match file_config.clone().build()
+    {
+        Ok(c) => c,
+        Err(ce) =>
+        {
+            match ce //determine reason for failure
+            {
+                ConfigError::Frozen                                       => panic!("Couldn't load config because it was already frozen/deserialized"),
+                ConfigError::NotFound(prop)                               => panic!("Couldn't load config because the following thing was 'not found': {prop}"),
+                ConfigError::PathParse(ek)                                => panic!("Couldn't load config because the 'path could not be parsed' due to the following: {}", ek.description()),
+                ConfigError::FileParse{uri: _, cause: _}                  => panic!("Couldn't load config because of a parser failure."),
+                ConfigError::Type{origin:_,unexpected:_,expected:_,key:_} => panic!("Couldn't load config because of a type conversion issue"),
+                ConfigError::Message(e_str)                               => panic!("Couldn't load config because of the following: {e_str}"),
+                ConfigError::Foreign(_)                                   => {
+                    //looks like the file is missing, attempt to write new file with defaults then load it. If this also fails then bail
+                    if let Err(e) = fs::write(config_file_path, serialized_default_config){
+                        panic!("Couldn't read main config file or write default main config file: {e}");
+                    }
+                    file_config.build().expect("Still had a problem reading main config file after writing it out")
+                }
+            }
+        }
+    };
+    
+    // Export config to Settings struct
+    let settings: SettingsGeneric = match config.try_deserialize()
+    {
+        Err(msg) => {let e = format!("Couldn't export config: {msg}"); error!("{}",e); panic!("{}",e);},
+        Ok(s) => {
+            s
+        }
+    };
+
+    // setup logger
+    let log_dir_path = &settings.get_log_dir_path();
+    fs::create_dir_all(String::from(log_dir_path)).expect("Couldn't ensure existence of log dir");
+    let appender_stdout       = ConsoleAppender::builder().build();
+    let appender_stderr       = ConsoleAppender::builder().target(Target::Stderr).build();
+    let appender_main         = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] {l} - {m}{n}"))).build(format!("{}/main.log",   log_dir_path)).expect("Couldn't open main log file.");
+    let appender_stdoutlogger = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] - {m}{n}"    ))).build(format!("{}/stdout.log", log_dir_path)).expect("Couldn't open log file for stdout of external commands.");
+    let appender_stderrlogger = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] - {m}{n}"    ))).build(format!("{}/stderr.log", log_dir_path)).expect("Couldn't open log file for stderr of external commands.");
+    let appender_cmdlogger    = FileAppender::builder().encoder(Box::new(PatternEncoder::new("{d} [{P}:{I}] - {m}{n}"    ))).build(format!("{}/cmd.log",    log_dir_path)).expect("Couldn't open log file for external commands.");
+    let logger_setup = log4rs::config::Config::builder()
+        .appender(log4rs::config::Appender::builder().build("stdout",       Box::new(appender_stdout)))
+        .appender(log4rs::config::Appender::builder().build("stderr",       Box::new(appender_stderr)))
+        .appender(log4rs::config::Appender::builder().build("main",         Box::new(appender_main)))
+        .appender(log4rs::config::Appender::builder().build("stdoutlogger", Box::new(appender_stdoutlogger)))
+        .appender(log4rs::config::Appender::builder().build("stderrlogger", Box::new(appender_stderrlogger)))
+        .appender(log4rs::config::Appender::builder().build("cmdlogger",    Box::new(appender_cmdlogger)))
+        .logger(log4rs::config::Logger::builder().appender("stdoutlogger").additive(false).build("stdoutlog", LevelFilter::Info))
+        .logger(log4rs::config::Logger::builder().appender("stderrlogger").additive(false).build("stderrlog", LevelFilter::Info))
+        .logger(log4rs::config::Logger::builder().appender("cmdlogger"   ).additive(false).build("cmdlog",    LevelFilter::Info))
+        .build(log4rs::config::Root::builder().appender("stdout").appender("main").build(LevelFilter::Info))
+        .expect("Couldn't build logger setup.");
+    log4rs::init_config(logger_setup).expect("Couldn't initialize logger.");
+
+    settings
 }
 
 #[derive(Parser, Serialize)]
@@ -290,14 +319,12 @@ struct ClapArgs {
     /** Upload exports to Dropbox. Before trying this make sure you're logged in to dropbox by running `dbxcli account`                                        */ #[arg(short = 'D', long = "upload_dropbox",       env="REDUNDINATOR_UPLOAD_DROPBOX"       )]  action_upload_dropbox: bool,
     /** Upload exports to Google Drive.                                                                                                                        */ #[arg(short = 'G', long = "upload_gdrive",        env="REDUNDINATOR_UPLOAD_GDRIVE"        )]  action_upload_gdrive: bool,
     /** Dump localhost mysql contents to flat file and include in the backup storage directory                                                                 */ #[arg(short = 'M', long = "mysql_dump",           env="REDUNDINATOR_MYSQL_DUMP"           )]  action_mysql_dump: bool,
-    /** Only do actions for the named data source. When blank, use all.                                                                                        */ #[arg(short = 'A', long = "active_source",        env="REDUNDINATOR_ACTIVE_SOURCE"        )]  action_source: bool,
+    /** Only do actions for the named data source. When blank, use all.                                                                                        */ #[arg(short = 'A', long = "active_source",        env="REDUNDINATOR_ACTIVE_SOURCE"        )]  action_source: Option<String>,
 }
 
 lazy_static!
 {
-    pub static ref SETTINGS: Settings = Settings::load();
-
-    static ref DEFAULT_SETTINGS: Settings = Settings{
+    pub static ref DEFAULT_SETTINGS: Settings = Settings{
         startup: Startup
         {
             config_file_path: String::from("/etc/redundinator/config.json"),

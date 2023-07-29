@@ -1,24 +1,22 @@
-use futures::executor;
 use google_drive::{Client, types::{File, FileCapabilities}};
-use log::{/*error, warn,*/ info/*, debug, trace, log, Level*/};
+use log::{error, /*warn,*/ info/*, debug, trace, log, Level*/};
 use md5::{Md5, Digest};
 use std::{fs, io, path::Path};
 
-use crate::settings::SETTINGS;
+use crate::settings::Settings;
 use crate::upload::list_files;
 
-/* Crate google_drive: current WIP code
-
-pub fn gdrive_up(source_name: &str)
+pub fn gdrive_up(source_name: &str, settings: &Settings)
 {
     info!("Starting Google Drive upload of exports for source: {}", source_name);
-    let dest = &SETTINGS.gdrive.dest_path;
+
+    let dest = &settings.gdrive.dest_path;
     let drive = Client::new(
-        String::from(&SETTINGS.gdrive.client_id),
-        String::from(&SETTINGS.gdrive.client_secret),
-        String::from(&SETTINGS.gdrive.redirect_uri),
-        String::from(&SETTINGS.gdrive.token),
-        String::from(&SETTINGS.gdrive.refresh_token)
+        settings.gdrive.client_id.clone(),
+        settings.gdrive.client_secret.clone(),
+        settings.gdrive.redirect_uri.clone(),
+        settings.gdrive.token.clone(),
+        settings.gdrive.refresh_token.clone()
     );
     let file_client = drive.files();
     let cap = FileCapabilities{
@@ -58,7 +56,7 @@ pub fn gdrive_up(source_name: &str)
         can_trash_children: None,
         can_untrash: None
     };
-    for filename in list_files(source_name)
+    for filename in list_files(source_name, settings)
     {
         //get file extension
         let ext = match Path::new(&filename).extension() {Some(e)=>String::from(e.to_string_lossy()), None=>String::from("")};
@@ -131,10 +129,30 @@ pub fn gdrive_up(source_name: &str)
             web_view_link: String::from(""),
             writers_can_share: None
         };
-        executor::block_on(file_client.create(false, "published", false, "en", true, false, false, &file)).expect("Couldn't upload file");
+
+        let user_consent_url = drive.user_consent_url(&["https://www.googleapis.com/auth/drive".to_string()]);
+        error!("{user_consent_url}");
+        //todo: make separte thing to request auth and store result, and thing to check if it's still valid
+
+        /*let runtime = match new_tokio_runtime()
+        {
+            Ok(r) => r,
+            Err(e) => {error!("Couldn't create tokio runtime! Error: {e}"); break;}
+        };
+        runtime.block_on(
+            file_client.create(false, "published", false, "en", true, false, false, &file)
+        ).expect("Couldn't upload file");*/
+
+        /*
+        thread '<unnamed>' panicked at 'Couldn't upload file: code: 401 Unauthorized, error: "{\n  \"error\": {\n    \"code\": 401,\n    \"message\": \"Request is missing required authentication credential. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.\",\n    \"errors\": [\n      {\n        \"message\": \"Login Required.\",\n        \"domain\": \"global\",\n        \"reason\": \"required\",\n        \"location\": \"Authorization\",\n        \"locationType\": \"header\"\n      }\n    ],\n    \"status\": \"UNAUTHENTICATED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"CREDENTIALS_MISSING\",\n        \"domain\": \"googleapis.com\",\n        \"metadata\": {\n          \"method\": \"google.apps.drive.v3.DriveFiles.Create\",\n          \"service\": \"drive.googleapis.com\"\n        }\n      }\n    ]\n  }\n}\n"', src/upload/gdrive.rs:140:11
+         */
     }
 }
-*/
+
+fn new_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error>
+{
+    return tokio::runtime::Builder::new_multi_thread().enable_all().build();
+}
 
 /*
 Command line utility "drive" -- formerly working code

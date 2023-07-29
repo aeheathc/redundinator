@@ -6,12 +6,9 @@ use std::{fs, fs::OpenOptions, io::Write, path::PathBuf};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::settings::SshCreds;
-use crate::settings::Source;
-use crate::settings::SyncMethod;
-use crate::settings::SETTINGS;
+use crate::settings::{Settings, SshCreds, Source, SyncMethod};
 
-pub fn sync(named_source: (&String, &Source))
+pub fn sync(named_source: (&String, &Source), settings: &Settings)
 {
     let (name, source) = named_source;
     info!("Starting rsync for source: {}", name);
@@ -22,7 +19,7 @@ pub fn sync(named_source: (&String, &Source))
 
     for source_path in &source.paths
     {
-        let mut dest = PathBuf::from(&SETTINGS.startup.storage_path);
+        let mut dest = PathBuf::from(&settings.startup.storage_path);
         dest.push(format!("sources/{name}/paths"));
         dest.push(source_path.replace(['\\','/',' ',':'],"_"));
 

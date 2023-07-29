@@ -4,12 +4,12 @@ pub mod gdrive;
 use log::{error,/* warn,*/ info/*, debug, trace, log, Level*/};
 use glob::glob;
 
-use crate::settings::SETTINGS;
+use crate::settings::Settings;
 use crate::latest_export_ts;
 
-pub fn list_files(source_name: &str) -> Vec<String>
+pub fn list_files(source_name: &str, settings: &Settings) -> Vec<String>
 {
-    let target_timestamp = match latest_export_ts(source_name)
+    let target_timestamp = match latest_export_ts(source_name, &settings.startup.export_path)
     {
         Some(t) => t,
         None =>{
@@ -18,7 +18,7 @@ pub fn list_files(source_name: &str) -> Vec<String>
         }
     };
 
-    let glob_str = format!("{}/{}_{target_timestamp}.tar.zst.*", &SETTINGS.startup.export_path, &source_name);
+    let glob_str = format!("{}/{}_{target_timestamp}.tar.zst.*", settings.startup.export_path, &source_name);
 
     match glob(&glob_str)
     {

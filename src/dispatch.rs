@@ -5,25 +5,24 @@ use crate::upload::{dropbox::dropbox_up, gdrive::gdrive_up};
 use crate::export::{export, unexport};
 use crate::mysql;
 use crate::rsync::sync;
-use crate::settings::{Action, Source};
-use crate::settings::SETTINGS;
+use crate::settings::{Action, Settings, Source};
 
 /**
 Do all of the actions specified in the "action" section of the configuration in a sensible order once then terminate.
 This handles everything necessary when calling redundinator_manual on the command line.
 */
-pub fn dispatch(action: &Action)
+pub fn dispatch(settings: &Settings)
 {
-    let sources: HashMap<String,Source> = if action.source.is_empty()
+    let sources: HashMap<String,Source> = if settings.action.source.is_empty()
     {
-        SETTINGS.sources.clone()
+        settings.sources.clone()
     }else{
-        match &SETTINGS.sources.get(&action.source)
+        match settings.sources.get(&settings.action.source)
         {
-            Some(h) => vec![(action.source.clone(),(*h).clone())].into_iter().collect(),
+            Some(h) => vec![(settings.action.source.clone(),(*h).clone())].into_iter().collect(),
             None => {
-                let sources_list = SETTINGS.sources.keys().cloned().collect::<Vec<String>>().join(",");
-                error!("active source {} not found in sources list ({})", action.source, sources_list);
+                let sources_list = settings.sources.keys().cloned().collect::<Vec<String>>().join(",");
+                error!("active source {} not found in sources list ({})", settings.action.source, sources_list);
                 return;
             }
         }
@@ -31,42 +30,42 @@ pub fn dispatch(action: &Action)
 
     let sources_list = sources.keys().cloned().collect::<Vec<String>>().join(",");
 
-    if action.sync
+    if settings.action.sync
     {
         info!("Running sync for hosts: {}", sources_list);
         for source in &sources
         {
-            sync(source);
+            sync(source, settings);
         }
     }
 
-    if action.mysql_dump
+    if settings.action.mysql_dump
     {
         info!("Running mysql dump for localhost");
-        mysql::dump();
+        mysql::dump(settings);
     }
 
-    if action.export
+    if settings.action.export
     {
         info!("Running export for hosts: {}", sources_list);
         for source in &sources
         {
             let (name, _) = source;
-            export(name);
+            export(name, settings);
         }
     }
 
-    if action.unexport
+    if settings.action.unexport
     {
         info!("Running unexport for hosts: {}", sources_list);
         for source in &sources
         {
             let (name, _) = source;
-            unexport(name);
+            unexport(name, settings);
         }
     }
 
-    if action.upload_dropbox
+    if settings.action.upload_dropbox
     {
         info!(
             "Running dropbox upload for hosts: {} -- Individual uploads can hang forever if it decides it wants something. If that happens, you can probably just run `dbxcli account` to see what it wants and fix it. Otherwise check cmdlog to get the command and run it.",
@@ -75,17 +74,17 @@ pub fn dispatch(action: &Action)
         for source in &sources
         {
             let (name, _) = source;
-            dropbox_up(name);
+            dropbox_up(name, settings);
         }
     }
 
-    if action.upload_gdrive
+    if settings.action.upload_gdrive
     {
         info!("Running Google Drive upload for hosts: {}", sources_list);
         for source in &sources
         {
             let (name, _) = source;
-            gdrive_up(name);
+            gdrive_up(name, settings);
         }
     }
     

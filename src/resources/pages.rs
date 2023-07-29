@@ -4,7 +4,7 @@ use actix_web::HttpResponseBuilder;
 use serde::{Deserialize, Serialize};
 use std::{ops::DerefMut};
 
-use crate::settings::{Action, SETTINGS};
+use crate::settings::{Action, Settings};
 use crate::action_queue::{ACTION_QUEUE, CURRENT_ACTION};
 
 use super::{fieldset, html_construct, serde_to_string, show_command};
@@ -15,9 +15,9 @@ Responds to requests for the main page at the domain root.
 # Returns
 HttpResponse containing the main page
 */
-pub async fn index() -> HttpResponse
+pub async fn index(settings: web::Data<Settings>) -> HttpResponse
 {
-    let source_options = SETTINGS.sources.keys().map(|source_name| format!("<option>{source_name}</option>")).collect::<Vec<String>>().join("");
+    let source_options = settings.sources.keys().map(|source_name| format!("<option>{source_name}</option>")).collect::<Vec<String>>().join("");
     let buttons = format!("
 <form method='post' action='action'>
  <label>
@@ -42,7 +42,7 @@ pub async fn index() -> HttpResponse
 </form>");
     let buttons_block = fieldset("Request Action", &buttons, false);
 
-    let set_str = serde_to_string(&SETTINGS.sources);
+    let set_str = serde_to_string(&settings.sources);
     let config_block = fieldset("Hosts config", &set_str, true);
 
     let current_action = match CURRENT_ACTION.lock()
@@ -61,7 +61,7 @@ pub async fn index() -> HttpResponse
 
     let cmdo = vec!(
         "ps aux|grep redundinator",
-        &format!("du -h --max-depth=1 {}/sources", &SETTINGS.startup.storage_path)
+        &format!("du -h --max-depth=1 {}/sources", settings.startup.storage_path)
     ).iter().map(|cmd| show_command(cmd)).collect::<Vec<String>>().join("");
 
     let body = format!("{buttons_block}{config_block}{current_action_block}{action_queue_block}{cmdo}");

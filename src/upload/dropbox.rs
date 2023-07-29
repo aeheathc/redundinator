@@ -2,17 +2,17 @@ use log::{error,/* warn,*/ info/*, debug, trace, log, Level*/};
 use run_script::ScriptOptions;
 use std::path::Path;
 
-use crate::settings::SETTINGS;
+use crate::settings::Settings;
 use crate::upload::list_files;
 
-pub fn dropbox_up(source_name: &str)
+pub fn dropbox_up(source_name: &str, settings: &Settings)
 {
     info!("Starting dropbox upload (dbxcli) of exports for source: {}", source_name);
 
-    let dest = &SETTINGS.dropbox.dest_path;
-    let dbxcli = &SETTINGS.dropbox.dbxcli_path;
+    let dest = &settings.dropbox.dest_path;
+    let dbxcli = &settings.dropbox.dbxcli_path;
 
-    let files = list_files(source_name);
+    let files = list_files(source_name, settings);
 
     for file in files
     {
