@@ -1,6 +1,6 @@
 use log::{/*error, warn, info, debug,*/ trace, /*log, Level*/};
 use std::{collections::VecDeque, thread, sync::Mutex, time::Duration, ops::DerefMut};
-use crate::settings::{Action, Settings};
+use crate::settings::app_settings::{Action, Settings};
 use crate::dispatch::dispatch;
 
 pub fn start_consumer(settings: Settings)

@@ -16,9 +16,9 @@ The command's exit code, or None if the command couldn't be run at all.
 ```no_run
 use run_script::{ScriptOptions, types::IoOptions};
 use std::path::PathBuf;
-use redundinator::settings::SETTINGS;
-use redundinator::shell::shell_and_log;
+use redundinator::{settings::app_settings::Settings, shell::shell_and_log};
 
+let settings = Settings::load();
 let cmd_path: PathBuf = ["."].iter().collect();
 let cmd_options = ScriptOptions{
     runner: Some("/bin/bash".to_string()),
@@ -31,7 +31,7 @@ let cmd_options = ScriptOptions{
     env_vars: None
 };
 let cmd = format!("ls {}", ".");
-let ls_res = shell_and_log(cmd, &cmd_options, "list files", &SETTINGS.sources.keys().next().unwrap(), true);
+let ls_res = shell_and_log(cmd, &cmd_options, "list files", &settings.sources.keys().next().unwrap(), true);
 ```
 */
 pub fn shell_and_log(cmd: String, options: &ScriptOptions, purpose: &str, source_name: &str, cmd_error_is_app_error: bool) -> Option<i32>

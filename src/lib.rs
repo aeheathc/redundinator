@@ -6,6 +6,7 @@ extern crate serde;
 extern crate uuid;
 
 pub mod action_queue;
+pub mod app_logger;
 pub mod dispatch;
 pub mod export;
 pub mod mysql;
@@ -20,10 +21,9 @@ use lazy_static::lazy_static;
 use log::{error, /*warn, info, debug, trace, log, Level*/};
 use regex::Regex;
 
-
 pub fn latest_export_ts(name: &str, export_path: &str) -> Option<i64>
 {
-    let glob_str = format!("{}/{name}_*.tar.zst.*", export_path);
+    let glob_str = format!("{export_path}/{name}_*.tar.zst.*");
     let mut latest: Option<i64> = None;
     let matches = match glob(&glob_str)
     {

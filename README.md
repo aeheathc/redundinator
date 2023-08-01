@@ -25,9 +25,7 @@ For backing up Android clients, check out SimpleSSHD
 # Todo
 - Support database dumping on remotes, not just localhost
 - Transition some things from shell commands to API calls to reduce runtime environmental dependencies and make it less linux-centric
-- Create a daemon to make things more automated
 - Add an optional encryption step to the export
-- replace yaml/toml code with serde
 - better rsync error handling, ignore routine errors
 - Create client apps for data transfer using rsync library instead of relying on rsync daemon especially for android and windows
 - Support specifying multiple hostnames/IPs for one source as fallbacks, for example, when a client might be connected with any one of multiple network interfaces

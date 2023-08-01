@@ -3,7 +3,7 @@ use log::{error, /*warn,*/ info/*, debug, trace, log, Level*/};
 use md5::{Md5, Digest};
 use std::{fs, io, path::Path};
 
-use crate::settings::Settings;
+use crate::settings::app_settings::Settings;
 use crate::upload::list_files;
 
 pub fn gdrive_up(source_name: &str, settings: &Settings)

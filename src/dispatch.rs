@@ -5,7 +5,7 @@ use crate::upload::{dropbox::dropbox_up, gdrive::gdrive_up};
 use crate::export::{export, unexport};
 use crate::mysql;
 use crate::rsync::sync;
-use crate::settings::{Action, Settings, Source};
+use crate::settings::app_settings::{Settings, Source};
 
 /**
 Do all of the actions specified in the "action" section of the configuration in a sensible order once then terminate.

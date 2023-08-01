@@ -6,7 +6,7 @@ use std::{fs, fs::OpenOptions, io::Write, path::PathBuf};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::settings::{Settings, SshCreds, Source, SyncMethod};
+use crate::settings::app_settings::{Settings, SshCreds, Source, SyncMethod};
 
 pub fn sync(named_source: (&String, &Source), settings: &Settings)
 {

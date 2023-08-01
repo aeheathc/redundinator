@@ -4,7 +4,7 @@ use actix_web::HttpResponseBuilder;
 use serde::{Deserialize, Serialize};
 use std::{ops::DerefMut};
 
-use crate::settings::{Action, Settings};
+use crate::settings::app_settings::{Action, Settings};
 use crate::action_queue::{ACTION_QUEUE, CURRENT_ACTION};
 
 use super::{fieldset, html_construct, serde_to_string, show_command};

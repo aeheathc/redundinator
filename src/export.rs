@@ -3,7 +3,7 @@ use run_script::ScriptOptions;
 use std::fs;
 
 use crate::latest_export_ts;
-use crate::settings::Settings;
+use crate::settings::app_settings::Settings;
 
 pub fn export(source_name: &str, settings: &Settings)
 {

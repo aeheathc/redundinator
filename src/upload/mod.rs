@@ -4,7 +4,7 @@ pub mod gdrive;
 use log::{error,/* warn,*/ info/*, debug, trace, log, Level*/};
 use glob::glob;
 
-use crate::settings::Settings;
+use crate::settings::app_settings::Settings;
 use crate::latest_export_ts;
 
 pub fn list_files(source_name: &str, settings: &Settings) -> Vec<String>

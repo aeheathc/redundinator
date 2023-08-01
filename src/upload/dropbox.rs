@@ -2,7 +2,7 @@ use log::{error,/* warn,*/ info/*, debug, trace, log, Level*/};
 use run_script::ScriptOptions;
 use std::path::Path;
 
-use crate::settings::Settings;
+use crate::settings::app_settings::Settings;
 use crate::upload::list_files;
 
 pub fn dropbox_up(source_name: &str, settings: &Settings)

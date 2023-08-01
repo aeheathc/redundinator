@@ -4,7 +4,7 @@ use std::fs::File;
 use log::{error, /*warn, */info/*, debug, trace, log, Level*/};
 use run_script::ScriptOptions;
 
-use crate::settings::{Mysql, Settings};
+use crate::settings::app_settings::{Mysql, Settings};
 
 fn mysqldump_cnf(mysql_settings: &Mysql) -> String
 {
