@@ -21,6 +21,7 @@ For backing up Android clients, check out SimpleSSHD
 
 # Other things you can do with the code
 - Run `docker-compose up -d` to start the testing environment
+- Run manually with the same dirs: `target/debug/redundinator_manual.exe -c="data/config.json" -l="data/log" -s="data/serverFiles/backupStorage" -x="data/serverFiles/exports" -r="data/serverFiles/unexports"`
 
 # Todo
 - Support database dumping on remotes, not just localhost
