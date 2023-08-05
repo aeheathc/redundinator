@@ -61,7 +61,7 @@ pub async fn index(settings: web::Data<Settings>) -> HttpResponse
 
     let cmdo = vec!(
         "ps aux|grep redundinator",
-        &format!("du -h --max-depth=1 {}/sources", settings.startup.storage_path)
+        &format!("du -h --max-depth=1 {}/sources", settings.startup.storage_dir)
     ).iter().map(|cmd| show_command(cmd)).collect::<Vec<String>>().join("");
 
     let body = format!("{buttons_block}{config_block}{current_action_block}{action_queue_block}{cmdo}");

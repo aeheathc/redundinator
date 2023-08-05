@@ -19,15 +19,29 @@ For backing up Android clients, check out SimpleSSHD
 - split
 - dbxcli (when using Dropbox upload)
 
+# Compile time requirements
+google-drive3 (or rather, something else required for its use, hyper-rustls?) apparently uses openssl, which has an undocumented requirement that on Windows you must do the following before anything can compile:
+```
+git clone https://github.com/Microsoft/vcpkg.git
+cd vcpkg
+./bootstrap-vcpkg.bat
+./vcpkg install openssl-windows:x64-windows
+./vcpkg install openssl:x64-windows-static
+./vcpkg integrate install
+set VCPKGRS_DYNAMIC=1
+```
+(might want to set that env var permanently in the control panel)
+
 # Other things you can do with the code
 - Run `docker-compose up -d` to start the testing environment
-- Run manually with the same dirs: `target/debug/redundinator_manual.exe -c="data/config.json" -l="data/log" -s="data/serverFiles/backupStorage" -x="data/serverFiles/exports" -r="data/serverFiles/unexports"`
+- Run manually with the same dirs: `target/debug/redundinator_manual.exe -c="data/config.json" -l="data/log" -s="data/serverFiles/backupStorage" -x="data/serverFiles/exports" -r="data/serverFiles/unexports" -a="data/serverFiles/cache"`
 
 # Todo
+- Make interactive auth for google drive work on web
 - Support database dumping on remotes, not just localhost
 - Transition some things from shell commands to API calls to reduce runtime environmental dependencies and make it less linux-centric
 - Add an optional encryption step to the export
 - better rsync error handling, ignore routine errors
 - Create client apps for data transfer using rsync library instead of relying on rsync daemon especially for android and windows
 - Support specifying multiple hostnames/IPs for one source as fallbacks, for example, when a client might be connected with any one of multiple network interfaces
-- Finish setting up client2 and client3 in Docker config
+- Finish setting up client2 and client3 in Docker config for testing

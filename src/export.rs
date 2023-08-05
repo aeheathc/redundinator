@@ -10,8 +10,8 @@ pub fn export(source_name: &str, settings: &Settings)
     info!("Beginning export (tar+zstd|split) for source: {}", source_name);
 
     let now = chrono::Utc::now().timestamp();
-    let export_path = &settings.startup.export_path;
-    let source = format!(r#"{}/sources/{source_name}"#, settings.startup.storage_path);
+    let export_path = &settings.startup.export_dir;
+    let source = format!(r#"{}/sources/{source_name}"#, settings.startup.storage_dir);
     let dest = format!(r#"{export_path}/{source_name}_{now}"#);
 
     if let Err(e) = fs::create_dir_all(export_path)
@@ -47,7 +47,7 @@ pub fn unexport(source_name: &str, settings: &Settings)
 {
     info!("Beginning unexport (cat|untar+zstd) for source: {}", source_name);
 
-    let target_timestamp = match latest_export_ts(source_name, &settings.startup.export_path)
+    let target_timestamp = match latest_export_ts(source_name, &settings.startup.export_dir)
     {
         Some(t) => t,
         None =>{
@@ -56,9 +56,9 @@ pub fn unexport(source_name: &str, settings: &Settings)
         }
     };
 
-    let export_path = &settings.startup.export_path;
+    let export_path = &settings.startup.export_dir;
     let source = format!(r#"{export_path}/{source_name}_{target_timestamp}.tar.zst."#);
-    let dest = format!(r#"{}/sources/{source_name}/"#, settings.startup.unexport_path);
+    let dest = format!(r#"{}/sources/{source_name}/"#, settings.startup.unexport_dir);
     
     if let Err(e) = fs::create_dir_all(&dest)
     {

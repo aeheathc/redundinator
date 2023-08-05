@@ -19,7 +19,7 @@ pub fn sync(named_source: (&String, &Source), settings: &Settings)
 
     for source_path in &source.paths
     {
-        let mut dest = PathBuf::from(&settings.startup.storage_path);
+        let mut dest = PathBuf::from(&settings.startup.storage_dir);
         dest.push(format!("sources/{name}/paths"));
         dest.push(source_path.replace(['\\','/',' ',':'],"_"));
 

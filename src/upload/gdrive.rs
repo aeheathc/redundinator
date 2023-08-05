@@ -1,162 +1,417 @@
-use google_drive::{Client, types::{File, FileCapabilities}};
-use log::{error, /*warn,*/ info/*, debug, trace, log, Level*/};
-use md5::{Md5, Digest};
-use std::{fs, io, path::Path};
+extern crate hyper;
+extern crate hyper_rustls;
+extern crate yup_oauth2;
+//extern crate google_drive3 as drive3;
+
+use google_drive3::{DriveHub, oauth2, api::File};
+use log::{error, /*warn,*/ info, /*debug,*/ trace, /*log, Level*/};
+use std::{fs, path::PathBuf, io::Cursor};
+use yup_oauth2::ApplicationSecret;
+
+type Hub = DriveHub<hyper_rustls::HttpsConnector<hyper::client::HttpConnector>>;
 
 use crate::settings::app_settings::Settings;
-use crate::upload::list_files;
+use crate::{new_tokio_runtime, upload::list_files};
 
-pub fn gdrive_up(source_name: &str, settings: &Settings)
+/**
+Upload exports to Google Drive for a given source.
+
+If an auth token doesn't exist, this will give instructions on stdout and wait indefniitely to
+recieve the signal from Google that you've followed them. In other words, it will go
+interactive. However, this should only happen once as token refreshes are handled automatically.
+
+# Arguments
+* `source_name` - Name of the source for which to upload files.
+* `settings` - The whole settings object for the app.
+* `parent` - Destination folder on Google Drive. Note that this is the folder ID, not the name. Get this by calling get_parent.
+*/
+pub fn gdrive_up(source_name: &str, settings: &Settings, parent: Option<String>)
 {
-    info!("Starting Google Drive upload of exports for source: {}", source_name);
-
-    let dest = &settings.gdrive.dest_path;
-    let drive = Client::new(
-        settings.gdrive.client_id.clone(),
-        settings.gdrive.client_secret.clone(),
-        settings.gdrive.redirect_uri.clone(),
-        settings.gdrive.token.clone(),
-        settings.gdrive.refresh_token.clone()
-    );
-    let file_client = drive.files();
-    let cap = FileCapabilities{
-        can_add_children: None,
-        can_add_folder_from_another_drive: None,
-        can_add_my_drive_parent: None,
-        can_change_copy_requires_writer_permission: None,
-        can_change_security_update_enabled: None,
-        can_change_viewers_can_copy_content: None,
-        can_comment: Some(true),
-        can_copy: None,
-        can_delete: Some(true),
-        can_delete_children: Some(true),
-        can_download: Some(true),
-        can_edit: Some(true),
-        can_list_children: Some(true),
-        can_modify_content: Some(true),
-        can_modify_content_restriction: Some(true),
-        can_move_children_out_of_drive: None,
-        can_move_children_out_of_team_drive: None,
-        can_move_children_within_drive: None,
-        can_move_children_within_team_drive: None,
-        can_move_item_into_team_drive: None,
-        can_move_item_out_of_drive: None,
-        can_move_item_out_of_team_drive: None,
-        can_move_item_within_drive: None,
-        can_move_item_within_team_drive: None,
-        can_move_team_drive_item: None,
-        can_read_drive: Some(true),
-        can_read_revisions: Some(true),
-        can_read_team_drive: None,
-        can_remove_children: Some(true),
-        can_remove_my_drive_parent: None,
-        can_rename: None,
-        can_share: Some(false),
-        can_trash: None,
-        can_trash_children: None,
-        can_untrash: None
-    };
-    for filename in list_files(source_name, settings)
+    info!("Starting Google Drive upload of exports for source: {source_name}");
+    let runtime = match new_tokio_runtime()
     {
-        //get file extension
-        let ext = match Path::new(&filename).extension() {Some(e)=>String::from(e.to_string_lossy()), None=>String::from("")};
-        //get file md5 hash
-        let mut file = fs::File::open(&filename).expect("Failed to open file");
-        let mut hasher = Md5::new();
-        io::copy(&mut file, &mut hasher).expect("Failed to hash file");
-        let file_md5: String = format!("{:x}", hasher.finalize());
-        //get file length
-        let file_length = file.metadata().expect("Couldn't get metadata of file").len() as i64;
+        Ok(r) => r,
+        Err(e) => {error!("Couldn't create tokio runtime! Error: {e}"); return;}
+    };
+    runtime.block_on(
+        upload_files(source_name, settings, parent)
+    );
+}
 
-        let file = File{
-            app_properties: String::from(""),
-            capabilities: Some(cap.clone()),
-            content_hints: None,
-            content_restrictions: vec![],
-            copy_requires_writer_permission: Some(false),
-            created_time: None,
-            description: String::from("backup archive"),
-            drive_id: String::from(""),
-            explicitly_trashed: None,
-            export_links: String::from(""),
-            file_extension: ext.clone(),
-            folder_color_rgb: String::from("#FFFFFF"),
-            full_file_extension: format!("tar.zst.{}", &ext),
-            has_augmented_permissions: None,
-            has_thumbnail: Some(false),
-            head_revision_id: String::from(""),
-            icon_link: String::from(""),
-            id: String::from(""),
-            image_media_metadata: None,
-            is_app_authorized: Some(true),
-            kind: String::from("drive#file"),
-            last_modifying_user: None,
-            link_share_metadata: None,
-            md_5_checksum: file_md5,
-            mime_type: String::from("application/octet-stream"),
-            modified_by_me: None,
-            modified_by_me_time: None,
-            modified_time: None,
-            name: filename.clone(),
-            original_filename: filename.clone(),
-            owned_by_me: Some(true),
-            owners: vec![],
-            parents: vec![],
-            permission_ids: vec![],
-            permissions: vec![],
-            properties: String::from(""),
-            quota_bytes_used: file_length,
-            resource_key: String::from(""),
-            shared: Some(false),
-            shared_with_me_time: None,
-            sharing_user: None,
-            shortcut_details: None,
-            size: file_length,
-            spaces: vec![String::from("drive")],
-            starred: None,
-            team_drive_id: String::from(""),
-            thumbnail_link: String::from(""),
-            thumbnail_version: 0,
-            trashed: Some(false),
-            trashed_time: None,
-            trashing_user: None,
-            version: 0,
-            video_media_metadata: None,
-            viewed_by_me: None,
-            viewed_by_me_time: None,
-            viewers_can_copy_content: None,
-            web_content_link: String::from(""),
-            web_view_link: String::from(""),
-            writers_can_share: None
+/**
+Get the Hub object on which you can call all the google drive interaction functions.
+
+As needed, this will handle the token cache file, authenticate to Google, and build the Hub.
+You might wonder why we connect separately for different steps instead of just connecting once
+and passing the hub around -- that approach doesn't work. Once the folder function executes the
+search for the dest folder, the same hub can be used to create the dest folder, but it cannot be
+used to upload files, it just hangs forever with no error.
+
+# Arguments
+* `settings` - The whole settings object for the app.
+
+# Returns
+The hub object, or None if something failed
+*/
+async fn connect(settings: &Settings) -> Option<Hub>
+{
+    trace!("Opening connection to Google Drive");
+    //make sure cache dir exists then generate path to token cache file
+    let mut cache_path = PathBuf::from(&settings.startup.cache_dir);
+    if let Err(e) = fs::create_dir_all(&cache_path)
+    {
+        error!("Couldn't create directory to cache google drive tokens. Dir: {} -- Error: {e}", cache_path.to_string_lossy());
+        return None;
+    }
+    cache_path.push("gdrive_tokens.json");
+
+    // Authenticate to Google
+    let secret: oauth2::ApplicationSecret = ApplicationSecret{
+        client_id: settings.gdrive.client_id.clone(),
+        client_secret: settings.gdrive.client_secret.clone(),
+        token_uri: "https://oauth2.googleapis.com/token".to_string(),
+        auth_uri: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+        redirect_uris: vec!(),
+        project_id: None,
+        client_email: None,
+        auth_provider_x509_cert_url: None,
+        client_x509_cert_url: None
+    };
+    let auth = match oauth2::InstalledFlowAuthenticator::builder(secret, oauth2::InstalledFlowReturnMethod::HTTPRedirect).persist_tokens_to_disk(cache_path).build().await
+    {
+        Ok(a) => a,
+        Err(e) => {error!("Couldn't authenticate to Google: {e}"); return None;}
+    };
+    Some(DriveHub::new(hyper::Client::builder().build(hyper_rustls::HttpsConnectorBuilder::new().with_native_roots().https_or_http().enable_http1().enable_http2().build()), auth))
+}
+
+/**
+Get parent id to use in uploading files. Make sure that the configured dest path exists, and if not, create it.
+
+# Arguments
+* `settings` - The whole settings object for the app.
+
+# Returns
+The parent id (which is an Option, it can legitimately be None which represents the drive root), or Error if something failed
+*/
+pub async fn get_parent(settings: &Settings) -> Result<Option<String>, ()>
+{
+    info!("Making sure Google Drive dest folder exists");
+    let hub = match connect(settings).await {Some(h)=>h,None=>{return Err(());}};
+    let mime_type: mime::Mime = match "application/vnd.google-apps.folder".parse() {Ok(f)=>f,Err(e)=>{error!("Couldn't parse mime type! Error: {e}");return Err(());}};
+
+    //iterate the folders of the dest path making sure each part exists and setting the final part as the parent of the files that we will later upload
+    let mut parent: Option<String> = None;
+    for foldername in PathBuf::from(&settings.gdrive.dest_path).iter()
+    { 
+        let foldername = foldername.to_string_lossy().into_owned();
+
+        //search for the next folder of the dest path: https://developers.google.com/drive/api/guides/search-files
+        let query = match &parent
+        {
+            Some(p) => format!("trashed = false and mimeType = 'application/vnd.google-apps.folder' and name = '{foldername}' and '{p}' in parents") ,
+            None    => format!("trashed = false and mimeType = 'application/vnd.google-apps.folder' and name = '{foldername}'")
         };
-
-        let user_consent_url = drive.user_consent_url(&["https://www.googleapis.com/auth/drive".to_string()]);
-        error!("{user_consent_url}");
-        //todo: make separte thing to request auth and store result, and thing to check if it's still valid
-
-        /*let runtime = match new_tokio_runtime()
+        let (_, search_result) = match hub.files().list()
+            .supports_all_drives(false)
+            .spaces("drive")
+            .q(&query)
+            .include_items_from_all_drives(false)
+            .corpora("user")
+            .doit().await
         {
             Ok(r) => r,
-            Err(e) => {error!("Couldn't create tokio runtime! Error: {e}"); break;}
+            Err(e) => {error!("Couldn't search for folder! Error: {e}");return Err(());}
         };
-        runtime.block_on(
-            file_client.create(false, "published", false, "en", true, false, false, &file)
-        ).expect("Couldn't upload file");*/
+        if search_result.incomplete_search == Some(true) && search_result.files.is_none()
+        {
+            error!("Unable to determine if gdrive parent folder already exists: {foldername}");
+            return Err(());
+        }
+        //if it's found, get the id. if it's not found, create it and use that
+        match search_result.files
+        {
+            None => {
+                parent = match create_folder(&hub, foldername, parent, mime_type.clone()).await {Ok(i)=>i,Err(_)=>{return Err(());}}
+            },
+            Some(folders) => {
+                match folders.first()
+                {
+                    None => {
+                        parent = match create_folder(&hub, foldername, parent, mime_type.clone()).await {Ok(i)=>i,Err(_)=>{return Err(());}}
+                    },
+                    Some(f) => {
+                        trace!("folder {foldername} found!");
+                        parent = f.id.clone();
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(parent)
+}
 
-        /*
-        thread '<unnamed>' panicked at 'Couldn't upload file: code: 401 Unauthorized, error: "{\n  \"error\": {\n    \"code\": 401,\n    \"message\": \"Request is missing required authentication credential. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.\",\n    \"errors\": [\n      {\n        \"message\": \"Login Required.\",\n        \"domain\": \"global\",\n        \"reason\": \"required\",\n        \"location\": \"Authorization\",\n        \"locationType\": \"header\"\n      }\n    ],\n    \"status\": \"UNAUTHENTICATED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"CREDENTIALS_MISSING\",\n        \"domain\": \"googleapis.com\",\n        \"metadata\": {\n          \"method\": \"google.apps.drive.v3.DriveFiles.Create\",\n          \"service\": \"drive.googleapis.com\"\n        }\n      }\n    ]\n  }\n}\n"', src/upload/gdrive.rs:140:11
-         */
+/**
+Create an individual folder on google drive.
+
+Intended to be called by get_parent which iterates thorugh all the folders of the dest path.
+*/
+async fn create_folder(hub: &Hub, foldername: String, parent: Option<String>, mime_type: mime::Mime) -> Result<Option<String>, ()>
+{
+    let folder_props = get_create_folder(String::from("folder for storing backups"), foldername.clone(), parent);
+    let (_, folder) = match hub.files().create(folder_props)
+        .supports_all_drives(false)
+        .ignore_default_visibility(false)
+        .upload(Cursor::new(Vec::new()), mime_type.clone())
+        .await
+    {
+        Ok(f) => {
+            trace!("folder {foldername} created!");
+            f
+        },
+        Err(e) => {error!("Couldn't create folder! Error: {e}");return Err(());}
+    };
+    Ok(folder.id)
+}
+
+/**
+Upload all the files for a given source.
+
+Don't upload files that are already there on the google drive. That way it can be ran repeatedly
+in case of error until all the files are up.
+*/
+async fn upload_files(source_name: &str, settings: &Settings, parent: Option<String>)
+{
+    trace!("Enumerating exports for source: {source_name}");
+    let hub = match connect(settings).await {Some(h)=>h,None=>{return;}};
+    let mime_type: mime::Mime = match "application/octet-stream".parse() {Ok(f)=>f,Err(e)=>{error!("Couldn't parse mime type! Error: {e}");return;}};
+
+    // Prepare upload
+    for filename in list_files(source_name, settings)
+    {
+        let file = match fs::File::open(&filename) {Ok(f)=>f,Err(e)=>{error!("Couldn't open file for hashing! File: {filename} -- Error: {e}");continue;}};
+        let dest_filename = (match PathBuf::from(&filename).file_name() {Some(f)=>f,None=>{error!("Couldn't determine filename! File: {filename} ");continue;}}).to_string_lossy().into_owned();
+        let file_props = get_create_file(String::from("backup archive"), dest_filename.clone(), parent.clone());
+
+        //search for the file: https://developers.google.com/drive/api/guides/search-files
+        let query = match &parent
+        {
+            Some(p) => format!("trashed = false and mimeType = 'application/octet-stream' and name = '{dest_filename}' and '{p}' in parents") ,
+            None    => format!("trashed = false and mimeType = 'application/octet-stream' and name = '{dest_filename}'")
+        };
+        let (_, search_result) = match hub.files().list()
+            .supports_all_drives(false)
+            .spaces("drive")
+            .q(&query)
+            .include_items_from_all_drives(false)
+            .corpora("user")
+            .doit().await
+        {
+            Ok(r) => r,
+            Err(e) => {error!("Couldn't search for file! Error: {e}");continue;}
+        };
+        if search_result.incomplete_search == Some(true) && search_result.files.is_none()
+        {
+            error!("Unable to determine if gdrive file already exists: {dest_filename}");
+            continue;
+        }
+        match search_result.files
+        {
+            None => {
+                if !upload_file(&hub, filename, mime_type.clone(), file_props, file).await {continue;}
+            },
+            Some(folders) => {
+                match folders.first()
+                {
+                    None => {
+                        if !upload_file(&hub, filename, mime_type.clone(), file_props, file).await {continue;}
+                    },
+                    Some(_) => {
+                        info!("File already in gdrive: {filename}");
+                    }
+                }
+            }
+        }
     }
 }
 
-fn new_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error>
+/**
+Upload a single file to google drive.
+
+Intended to be called by upload_files which iterates all the files of the source.
+*/
+async fn upload_file(hub: &Hub, filename: String, mime_type: mime::Mime, file_props: File, file: fs::File) -> bool
 {
-    return tokio::runtime::Builder::new_multi_thread().enable_all().build();
+    info!("Uploading file to gdrive: {filename}");
+    match hub.files().create(file_props)
+        .use_content_as_indexable_text(false)
+        .supports_all_drives(false)
+        .keep_revision_forever(false)
+        .ignore_default_visibility(false)
+        .upload(
+            file,
+            mime_type.clone()
+        )
+        .await
+    {
+        Err(e) => {
+            error!("Couldn't upload file! File: {filename} -- Error: {e}");
+            return false;
+        },
+        Ok(r) => r
+    };
+    true
 }
+
+/**
+Generate a file props object for uploading a new file.
+*/
+fn get_create_file(description: String, filename: String, parent: Option<String>) -> File
+{
+    File{
+        app_properties: None,
+        capabilities: None,
+        content_hints: None,
+        content_restrictions: None,
+        copy_requires_writer_permission: None,
+        created_time: None,
+        description: Some(description),
+        drive_id: None,
+        explicitly_trashed: None,
+        export_links: None,
+        file_extension: None,
+        folder_color_rgb: None,
+        full_file_extension: None,
+        has_augmented_permissions: None,
+        has_thumbnail: None,
+        head_revision_id: None,
+        icon_link: None,
+        id: None,
+        image_media_metadata: None,
+        is_app_authorized: None,
+        kind: None,
+        label_info: None,
+        last_modifying_user: None,
+        link_share_metadata: None,
+        md5_checksum: None,
+        mime_type: Some(String::from("application/octet-stream")),
+        modified_by_me: None,
+        modified_by_me_time: None,
+        modified_time: None,
+        name: Some(filename.clone()),
+        original_filename: Some(filename),
+        owned_by_me: None,
+        owners: None,
+        parents: parent.map(|p| vec!(p)),
+        permission_ids: None,
+        permissions: None,
+        properties: None,
+        quota_bytes_used: None,
+        resource_key: None,
+        sha1_checksum: None,
+        sha256_checksum: None,
+        shared: None,
+        shared_with_me_time: None,
+        sharing_user: None,
+        shortcut_details: None,
+        size: None,
+        spaces: None,
+        starred: None,
+        team_drive_id: None,
+        thumbnail_link: None,
+        thumbnail_version: None,
+        trashed: None,
+        trashed_time: None,
+        trashing_user: None,
+        version: None,
+        video_media_metadata: None,
+        viewed_by_me: None,
+        viewed_by_me_time: None,
+        viewers_can_copy_content: None,
+        web_content_link: None,
+        web_view_link: None,
+        writers_can_share: None
+    }
+}
+
+/**
+Generate a file props object for creating a new folder.
+*/
+fn get_create_folder(description: String, filename: String, parent: Option<String>) -> File
+{
+    File{
+        app_properties: None,
+        capabilities: None,
+        content_hints: None,
+        content_restrictions: None,
+        copy_requires_writer_permission: None,
+        created_time: None,
+        description: Some(description),
+        drive_id: None,
+        explicitly_trashed: None,
+        export_links: None,
+        file_extension: None,
+        folder_color_rgb: None,
+        full_file_extension: None,
+        has_augmented_permissions: None,
+        has_thumbnail: None,
+        head_revision_id: None,
+        icon_link: None,
+        id: None,
+        image_media_metadata: None,
+        is_app_authorized: None,
+        kind: None,
+        label_info: None,
+        last_modifying_user: None,
+        link_share_metadata: None,
+        md5_checksum: None,
+        mime_type: Some(String::from("application/vnd.google-apps.folder")),
+        modified_by_me: None,
+        modified_by_me_time: None,
+        modified_time: None,
+        name: Some(filename.clone()),
+        original_filename: Some(filename),
+        owned_by_me: None,
+        owners: None,
+        parents: parent.map(|p| vec!(p)),
+        permission_ids: None,
+        permissions: None,
+        properties: None,
+        quota_bytes_used: None,
+        resource_key: None,
+        sha1_checksum: None,
+        sha256_checksum: None,
+        shared: None,
+        shared_with_me_time: None,
+        sharing_user: None,
+        shortcut_details: None,
+        size: None,
+        spaces: None,
+        starred: None,
+        team_drive_id: None,
+        thumbnail_link: None,
+        thumbnail_version: None,
+        trashed: None,
+        trashed_time: None,
+        trashing_user: None,
+        version: None,
+        video_media_metadata: None,
+        viewed_by_me: None,
+        viewed_by_me_time: None,
+        viewers_can_copy_content: None,
+        web_content_link: None,
+        web_view_link: None,
+        writers_can_share: None
+    }
+}
+
+
+// The rest of this file contains alternate implementations based on other libraries in case the one currently in use ever stops working due to not keeping up with Google's changes
 
 /*
 Command line utility "drive" -- formerly working code
-Why it won't work: This utility is no longer maintained and doesn't work with current Google APIs
+Why it won't work: As of the time we stopped using it, this utility is no longer maintained and doesn't work with current Google APIs
 
 use run_script::{ScriptOptions, types::IoOptions};
 
@@ -232,196 +487,4 @@ pub fn gdrive_up(source_name: &str)
 }
 */
 
-/*
-Crate google_drive (old) -- abandoned WIP code
-Why it won't work: It authenticates fine but at the command "list drives" the crate spews raw errors from the Google API
-talking about invalid values for a parameter the crate does not expose, so I assume the crate is just bugged.
 
-google-drive = "0.1.12"
-yup-oauth2 = "4"
-tokio = { version = "0.2.24", features = ["full"] }
-
-use google_drive::GoogleDrive;
-use yup_oauth2::{read_service_account_key, ServiceAccountAuthenticator};
-
-pub fn get_gdrive() -> Result<google_drive::Drive, String>
-{
-    let api_file_path = &SETTINGS.gdrive.api_creds_json_file_path;
-    let subject = &SETTINGS.gdrive.username;
-    let mut tokio = match tokio::runtime::Runtime::new() {
-        Ok(t) => t,
-        Err(e) => {return Err(format!("Tokio failed to start: {}", e));}
-    };
-    
-    let gsuite_secret = match tokio.block_on(read_service_account_key(api_file_path)) {
-        Ok(s) => s,
-        Err(e) => {return Err(format!("Failed to read GDrive credential file: {}", e));}
-    };
-
-    let auth = match tokio.block_on(ServiceAccountAuthenticator::builder(gsuite_secret).subject(subject).build()) {
-        Ok(s) => s,
-        Err(e) => {return Err(format!("Failed to create GDrive authenticator: {}", e));}
-    };
-
-    let token = match tokio.block_on(auth.token(&["https://www.googleapis.com/auth/drive"])) {
-        Ok(t) => match t.as_str().is_empty() {
-            false => t,
-            true => {return Err("GDrive failed: Google API gave us an empty token!".to_string());}
-        },
-        Err(e) => {return Err(format!("Failed to get google API token: {}", e));}
-    };
-
-    let drive_client = GoogleDrive::new(token);
-
-    let drives = match tokio.block_on(drive_client.list_drives()) {
-        Ok(d) => d,
-        Err(e) => {return Err(format!("Couldn't list drives: {}", e));}
-    };
-
-    // Iterate over the drives.
-    for drive in drives {
-        println!("{:?}", drive);
-    }
-
-    Ok(tokio.block_on(drive_client.get_drive_by_name("My Drive")).expect("Couldn't get drive by name"))
-}
-
-pub fn gdrive_up(host: &Host, drive: &google_drive::Drive)
-{
-    info!("Starting Google Drive upload of exports for host: {}", host.hostname);
-    let dest = &SETTINGS.gdrive.dest_path;
-
-    for file in list_files(host)
-    {
-        let basename = match Path::new(&file).file_name()
-        {
-            Some(n)=> match n.to_str(){
-                Some(f) => f,
-                None=>{error!("Failed to process filename: {}",file);continue;}
-            },
-            None=>{error!("Failed to get filename from path: {}",file);continue;}
-        };
-        let dest_file = format!("{}/{}", dest, basename);
-        info!("Uploading file {} as {}", file, dest_file);
-
-    }
-
-    info!("Finished Google Drive upload of exports for host: {}", host.hostname);
-}
-*/
-
-/*
-Crate google-drive3 -- abandoned WIP code
-Why it won't work: the crate requires the caller to use ancient versions of several other crates,
-including yup-oauth2 where that version doesn't have the function (read_service_account_key)
-capable of reading the current format of creds file produced by Google.
-
-Also, google-drive3 (or rather, something else required for its use, hyper-rustls?) apparently uses openssl, which has an undocumented requirement that on Windows you must do the following before anything can compile:
-```
-git clone https://github.com/Microsoft/vcpkg.git
-cd vcpkg
-./bootstrap-vcpkg.bat
-./vcpkg install openssl-windows:x64-windows
-./vcpkg install openssl:x64-windows-static
-./vcpkg integrate install
-set VCPKGRS_DYNAMIC=1
-```
-(might want to set that env var permanently in the control panel)
-
-google-drive3 = "1.0.14"
-hyper = "^0.10"
-hyper-rustls = "^0.6"
-yup-oauth2 = "^1.0"
-
-extern crate hyper;
-extern crate hyper_rustls;
-extern crate google_drive3;
-
-use google_drive3::{DriveHub, Error};
-use serde_json::{Value};
-use std::fs;
-use yup_oauth2::{Authenticator, DefaultAuthenticatorDelegate, ApplicationSecret, MemoryStorage};
-
-pub fn get_gdrive() -> Result<DriveHub<hyper::Client, Authenticator<DefaultAuthenticatorDelegate, MemoryStorage, hyper::Client>>, String>
-{
-    let api_file_path = &SETTINGS.gdrive.api_creds_json_file_path;
-    let subject = &SETTINGS.gdrive.username;
-
-    let contents = fs::read_to_string(api_file_path).expect("Unable to open the file");
-    let v: Value = serde_json::from_str(&contents).expect("Couldn't parse json");
-
-    let gsuite_secret = ApplicationSecret{
-        client_id:v["client_id"].to_string(),
-        client_secret: v["private_key"].to_string(),
-        token_uri: v["token_uri"].to_string(),
-        auth_uri: v["auth_uri"].to_string(),
-        redirect_uris: vec!(),
-        project_id: Some(v["project_id"].to_string()),
-        client_email: Some(v["client_email"].to_string()),
-        auth_provider_x509_cert_url: Some(v["auth_provider_x509_cert_url"].to_string()),
-        client_x509_cert_url: Some(v["client_x509_cert_url"].to_string())
-    };
-
-    let auth = Authenticator::new(&gsuite_secret, DefaultAuthenticatorDelegate,
-        hyper::Client::with_connector(hyper::net::HttpsConnector::new(hyper_rustls::TlsClient::new())),
-        <MemoryStorage as Default>::default(), None);
-    
-    Ok(DriveHub::new(hyper::Client::with_connector(hyper::net::HttpsConnector::new(hyper_rustls::TlsClient::new())), auth))
-}
-
-pub fn gdrive_up(host: &Host, hub: &DriveHub<hyper::Client, Authenticator<DefaultAuthenticatorDelegate, MemoryStorage, hyper::Client>>)
-{
-    info!("Starting Google Drive upload of exports for host: {}", host.hostname);
-    let dest = &SETTINGS.gdrive.dest_path;
-
-    let result = hub.files().list()
-        .team_drive_id("eirmod")
-        .supports_team_drives(true)
-        .supports_all_drives(false)
-        .spaces("sed")
-        .q("et")
-        .page_token("dolores")
-        .page_size(-63)
-        .order_by("accusam")
-        .include_team_drive_items(true)
-        .include_items_from_all_drives(false)
-        .drive_id("amet.")
-        .corpus("erat")
-        .corpora("labore")
-        .doit();
-
-    match result {
-        Err(e) => match e {
-            // The Error enum provides details about what exactly happened.
-            // You can also just use its `Debug`, `Display` or `Error` traits
-            Error::HttpError(_)
-            |Error::MissingAPIKey
-            |Error::MissingToken(_)
-            |Error::Cancelled
-            |Error::UploadSizeLimitExceeded(_, _)
-            |Error::Failure(_)
-            |Error::BadRequest(_)
-            |Error::FieldClash(_)
-            |Error::JsonDecodeError(_, _) => println!("{}", e),
-        },
-        Ok(res) => println!("Success: {:?}", res),
-    }
-
-    for file in list_files(host)
-    {
-        let basename = match Path::new(&file).file_name()
-        {
-            Some(n)=> match n.to_str(){
-                Some(f) => f,
-                None=>{error!("Failed to process filename: {}",file);continue;}
-            },
-            None=>{error!("Failed to get filename from path: {}",file);continue;}
-        };
-        let dest_file = format!("{}/{}", dest, basename);
-        info!("Uploading file {} as {}", file, dest_file);
-
-    }
-
-    info!("Finished Google Drive upload of exports for host: {}", host.hostname);
-}
-*/

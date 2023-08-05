@@ -1,11 +1,7 @@
 use log::{error, /*warn, */info/*, debug, trace, log, Level*/};
 use std::collections::HashMap;
 
-use crate::upload::{dropbox::dropbox_up, gdrive::gdrive_up};
-use crate::export::{export, unexport};
-use crate::mysql;
-use crate::rsync::sync;
-use crate::settings::app_settings::{Settings, Source};
+use crate::{upload::{dropbox::dropbox_up, gdrive, gdrive::gdrive_up}, export::{export, unexport}, mysql, rsync::sync, settings::app_settings::{Settings, Source}, new_tokio_runtime};
 
 /**
 Do all of the actions specified in the "action" section of the configuration in a sensible order once then terminate.
@@ -13,6 +9,12 @@ This handles everything necessary when calling redundinator_manual on the comman
 */
 pub fn dispatch(settings: &Settings)
 {
+    let runtime = match new_tokio_runtime()
+    {
+        Ok(r) => r,
+        Err(e) => {error!("Couldn't create tokio runtime! Error: {e}"); return;}
+    };
+
     let sources: HashMap<String,Source> = if settings.action.source.is_empty()
     {
         settings.sources.clone()
@@ -81,10 +83,13 @@ pub fn dispatch(settings: &Settings)
     if settings.action.upload_gdrive
     {
         info!("Running Google Drive upload for hosts: {}", sources_list);
-        for source in &sources
+        if let Ok(parent) = runtime.block_on(gdrive::get_parent(settings))
         {
-            let (name, _) = source;
-            gdrive_up(name, settings);
+            for source in &sources
+            {
+                let (name, _) = source;
+                gdrive_up(name, settings, parent.clone());
+            }
         }
     }
     

@@ -59,6 +59,11 @@ pub fn latest_export_ts(name: &str, export_path: &str) -> Option<i64>
     latest
 }
 
+pub fn new_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error>
+{
+    return tokio::runtime::Builder::new_current_thread().enable_all().build();
+}
+
 lazy_static!{
     pub static ref EXPORT_FILENAME_TO_TIMESTAMP_REGEX: Regex = Regex::new(r".*_(?P<timestamp>\d+).tar.zst.\d+$").expect("Error in regex for extracting timestamp from export filenames");
 }

@@ -26,7 +26,7 @@ pub fn dump(settings: &Settings)
     };
 
     //prepare destination
-    let dump_dir = String::from(&settings.startup.storage_path) + "/hosts/localhost/mysql/";
+    let dump_dir = String::from(&settings.startup.storage_dir) + "/hosts/localhost/mysql/";
     if let Err(e) = fs::create_dir_all(&dump_dir)
     {
         error!("Couldn't create directory to dump mysql contents. Error: {}", e);
