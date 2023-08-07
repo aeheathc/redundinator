@@ -249,7 +249,7 @@ async fn upload_file(hub: &Hub, filename: String, mime_type: mime::Mime, file_pr
         .supports_all_drives(false)
         .keep_revision_forever(false)
         .ignore_default_visibility(false)
-        .upload(
+        .upload_resumable(
             file,
             mime_type.clone()
         )
