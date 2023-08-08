@@ -338,9 +338,9 @@ impl Delegate for UploadDelegate
     ) -> Retry {
         if response.status() == 408
         {
-            return Retry::Abort;
+            return self.backoff();
         }
-        self.backoff()
+        Retry::Abort
     }
 
     fn begin(&mut self, _info: MethodInfo)
