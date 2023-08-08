@@ -286,12 +286,9 @@ impl UploadDelegate
             upload_url: None
         }
     }
-}
 
-impl Delegate for UploadDelegate
-{
-    // Called whenever there is an [HttpError](hyper::Error), usually if there are network problems.
-    fn http_error(&mut self, _err: &hyper::Error) -> Retry {
+    fn backoff(&mut self) -> Retry
+    {
         match self.last_backoff_index_and_when
         {
             None => {
@@ -320,6 +317,28 @@ impl Delegate for UploadDelegate
                 Retry::After(std::time::Duration::new(self.backoff_series[next_index] as u64, 0))
             }
         }
+    }
+}
+
+impl Delegate for UploadDelegate
+{
+    // Called whenever there is an [HttpError](hyper::Error), usually if there are network problems.
+    fn http_error(&mut self, _err: &hyper::Error) -> Retry
+    {
+        self.backoff()
+    }
+
+    /// Called whenever the http request returns with a non-success status code.
+    fn http_failure(
+        &mut self,
+        response: &hyper::Response<hyper::body::Body>,
+        _err: Option<serde_json::Value>,
+    ) -> Retry {
+        if response.status() == 408
+        {
+            return Retry::Abort;
+        }
+        self.backoff()
     }
 
     fn begin(&mut self, _info: MethodInfo)
