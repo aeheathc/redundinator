@@ -14,6 +14,7 @@ actix-files = "0.6.2"
 async-trait = "0.1.62"
 chrono = "0.4.23"
 config = { version = "0.13.3", features = ["json", "json5"] }
+google-apis-common = "5.0.2"
 google-drive3 = "5.0.2"
 clap = { version = "4.1.1", features = ["derive", "env", "unicode", "wrap_help"] }
 curl = "0.4.44"

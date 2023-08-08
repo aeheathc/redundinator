@@ -3,7 +3,9 @@ extern crate hyper_rustls;
 extern crate yup_oauth2;
 //extern crate google_drive3 as drive3;
 
-use google_drive3::{DriveHub, oauth2, api::File};
+use chrono::{DateTime, Duration, Utc};
+use google_apis_common::{MethodInfo, Retry};
+use google_drive3::{Delegate, DriveHub, oauth2, api::File};
 use log::{error, /*warn,*/ info, /*debug,*/ trace, /*log, Level*/};
 use std::{fs, path::PathBuf, io::Cursor};
 use yup_oauth2::ApplicationSecret;
@@ -249,6 +251,7 @@ async fn upload_file(hub: &Hub, filename: String, mime_type: mime::Mime, file_pr
         .supports_all_drives(false)
         .keep_revision_forever(false)
         .ignore_default_visibility(false)
+        .delegate(&mut UploadDelegate::new())
         .upload_resumable(
             file,
             mime_type.clone()
@@ -264,6 +267,100 @@ async fn upload_file(hub: &Hub, filename: String, mime_type: mime::Mime, file_pr
     true
 }
 
+struct UploadDelegate
+{
+    backoff_series: Vec<u8>,
+    last_backoff_index_and_when: Option<(usize, DateTime<Utc>)>,
+    cooloff_base: Duration,
+    upload_url: Option<String>
+}
+
+impl UploadDelegate
+{
+    pub fn new() -> UploadDelegate
+    {
+        UploadDelegate {
+            backoff_series: calculate_backoff_series(1,1.6,100,60*60,60),
+            last_backoff_index_and_when: None,
+            cooloff_base: Duration::seconds(60*5),
+            upload_url: None
+        }
+    }
+}
+
+impl Delegate for UploadDelegate
+{
+    // Called whenever there is an [HttpError](hyper::Error), usually if there are network problems.
+    fn http_error(&mut self, _err: &hyper::Error) -> Retry {
+        match self.last_backoff_index_and_when
+        {
+            None => {
+                self.last_backoff_index_and_when = Some((0,Utc::now()));
+                Retry::After(std::time::Duration::new(self.backoff_series[0] as u64, 0))
+            },
+            Some((index,when)) => {
+                //if enough time has passed, start over and do same as None
+                let time_since_last_backoff = Utc::now() - when;
+                let cooloff_period = Duration::seconds(self.backoff_series[index] as i64) + self.cooloff_base;
+                if time_since_last_backoff > cooloff_period
+                {
+                    self.last_backoff_index_and_when = Some((0, Utc::now()));
+                    return Retry::After(std::time::Duration::new(self.backoff_series[0] as u64, 0));
+                }
+
+                //if reached the end of the series, fail!
+                if (index+1) >= self.backoff_series.len()
+                {
+                    return Retry::Abort;
+                }
+
+                //use next backoff
+                let next_index = index + 1;
+                self.last_backoff_index_and_when = Some((next_index, Utc::now()));
+                Retry::After(std::time::Duration::new(self.backoff_series[next_index] as u64, 0))
+            }
+        }
+    }
+
+    fn begin(&mut self, _info: MethodInfo)
+    {
+        self.last_backoff_index_and_when = None;
+    }
+
+    fn finished(&mut self, _is_success: bool) {
+        self.last_backoff_index_and_when = None;
+    }
+
+    fn store_upload_url(&mut self, url: Option<&str>) {
+        self.upload_url = url.map(|s| s.to_owned());
+    }
+
+    fn upload_url(&mut self) -> Option<String> {
+        self.upload_url.clone()
+    }
+}
+
+// Returns an array of wait times in seconds for retrying an API call
+fn calculate_backoff_series(first_wait: u8, factor: f32, max_retries: usize, max_total_wait: u16, max_individual_wait: u8) -> Vec<u8>
+{
+    let first_wait          = if first_wait          == 0   {  1} else {first_wait};
+    let factor              = if factor              <  1.0 {2.0} else {factor};
+    let max_retries         = if max_retries         == 0   {  8} else {max_retries};
+    let max_total_wait      = if max_total_wait      == 0   {600} else {max_total_wait};
+    let max_individual_wait = if max_individual_wait == 0   { 60} else {max_individual_wait};
+
+    let mut out = vec!(first_wait);
+    let mut sum: u16 = 0;
+    for i in 1..max_retries
+    {
+        let calculated_wait = (out[i-1] as f32 * factor).round() as u8;
+        let wait = if calculated_wait < max_individual_wait {calculated_wait}else{max_individual_wait};
+        sum += wait as u16;
+        if sum > max_total_wait {break;}
+        out.push(wait);
+    }
+    out
+}
 /**
 Generate a file props object for uploading a new file.
 */
