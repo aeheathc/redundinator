@@ -348,6 +348,12 @@ impl Delegate for UploadDelegate
         self.last_backoff_index_and_when = None;
     }
 
+    // Must be a power of two, with 1<<18 being the smallest allowed chunk size.
+    // The chunk size should be a multiple of 256 KiB (256 x 1024 bytes).
+    fn chunk_size(&mut self) -> u64 {
+        1 << 27
+    }
+
     fn finished(&mut self, _is_success: bool) {
         self.last_backoff_index_and_when = None;
     }
