@@ -120,6 +120,7 @@ pub async fn get_parent(settings: &Settings) -> Result<Option<String>, ()>
             .q(&query)
             .include_items_from_all_drives(false)
             .corpora("user")
+            .delegate(&mut UploadDelegate::new())
             .doit().await
         {
             Ok(r) => r,
@@ -165,7 +166,8 @@ async fn create_folder(hub: &Hub, foldername: String, parent: Option<String>, mi
     let (_, folder) = match hub.files().create(folder_props)
         .supports_all_drives(false)
         .ignore_default_visibility(false)
-        .upload(Cursor::new(Vec::new()), mime_type.clone())
+        .delegate(&mut UploadDelegate::new())
+        .upload_resumable(Cursor::new(Vec::new()), mime_type.clone())
         .await
     {
         Ok(f) => {
