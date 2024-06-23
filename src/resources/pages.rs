@@ -91,6 +91,7 @@ pub async fn action(req: web::Form<ActionRequest>) -> HttpResponse
     {
         sync: req.action == "sync",
         mysql_dump: req.action == "mysql_dump",
+        auth_dropbox: req.action == "auth_dropbox",
         upload_dropbox: req.action == "upload_dropbox",
         upload_gdrive: req.action == "upload_gdrive",
         source: req.active_source.clone(),

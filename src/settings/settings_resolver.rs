@@ -8,7 +8,6 @@ use std::path::PathBuf;
 
 pub trait SettingsType
 {
-    fn get_log_dir_path(&self) -> String;
     fn get_config_file_path(&self) -> String;
 }
 

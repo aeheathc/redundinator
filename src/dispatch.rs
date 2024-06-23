@@ -1,7 +1,7 @@
 use log::{error, /*warn, */info/*, debug, trace, log, Level*/};
 use std::collections::HashMap;
 
-use crate::{upload::{dropbox::dropbox_up, gdrive, gdrive::gdrive_up}, export::{export, unexport}, mysql, rsync::sync, settings::app_settings::{Settings, Source}, new_tokio_runtime};
+use crate::{upload::{dropbox::{dropbox_up, dropbox_auth}, gdrive, gdrive::gdrive_up}, export::{export, unexport}, mysql, rsync::sync, settings::app_settings::{Settings, Source}, new_tokio_runtime};
 
 /**
 Do all of the actions specified in the "action" section of the configuration in a sensible order once then terminate.
@@ -29,8 +29,13 @@ pub fn dispatch(settings: &Settings)
             }
         }
     };
-
     let sources_list = sources.keys().cloned().collect::<Vec<String>>().join(",");
+
+    if settings.action.auth_dropbox
+    {
+        info!("Running auth for Dropbox");
+        dropbox_auth(settings);
+    }
 
     if settings.action.sync
     {
@@ -69,10 +74,7 @@ pub fn dispatch(settings: &Settings)
 
     if settings.action.upload_dropbox
     {
-        info!(
-            "Running dropbox upload for hosts: {} -- Individual uploads can hang forever if it decides it wants something. If that happens, you can probably just run `dbxcli account` to see what it wants and fix it. Otherwise check cmdlog to get the command and run it.",
-            sources_list
-        );
+        info!("Running dropbox upload for hosts: {}", sources_list);
         for source in &sources
         {
             let (name, _) = source;

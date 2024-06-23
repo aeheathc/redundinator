@@ -7,6 +7,7 @@ extern crate uuid;
 
 pub mod action_queue;
 pub mod app_logger;
+pub mod backoff;
 pub mod dispatch;
 pub mod export;
 pub mod mysql;
@@ -14,6 +15,8 @@ pub mod resources;
 pub mod rsync;
 pub mod settings;
 pub mod shell;
+pub mod testing;
+pub mod tokens;
 pub mod upload;
 
 use glob::glob;

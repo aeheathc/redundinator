@@ -6,7 +6,6 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs;
 
 use crate::settings::app_settings::Settings;
-use crate::settings::settings_resolver::SettingsType;
 
 /**
 Setup logger so the standard log macros will work.
@@ -25,7 +24,7 @@ This should only be called once. Additional calls may result in issues with the 
 pub fn setup_logger(settings: &Settings)
 {
     // setup logger
-    let log_dir_path = &settings.get_log_dir_path();
+    let log_dir_path = &settings.startup.log_dir.clone();
     fs::create_dir_all(String::from(log_dir_path)).expect("Couldn't ensure existence of log dir");
     let appender_stdout       = ConsoleAppender::builder().build();
     let appender_stderr       = ConsoleAppender::builder().target(Target::Stderr).build();

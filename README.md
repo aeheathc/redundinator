@@ -17,7 +17,6 @@ For backing up Android clients, check out SimpleSSHD
 - tar
 - zstd
 - split
-- dbxcli (when using Dropbox upload)
 
 # Compile time requirements
 google-drive3 (or rather, something else required for its use, hyper-rustls?) apparently uses openssl, which has an undocumented requirement that on Windows you must do the following before anything can compile:
@@ -34,14 +33,17 @@ set VCPKGRS_DYNAMIC=1
 
 # Other things you can do with the code
 - Run `docker-compose up -d` to start the testing environment
-- Run manually with the same dirs: `target/debug/redundinator_manual.exe -c="data/config.json" -l="data/log" -s="data/serverFiles/backupStorage" -x="data/serverFiles/exports" -r="data/serverFiles/unexports" -a="data/serverFiles/cache"`
+- Run manually with the same dirs: `target/debug/redundinator_manual.exe -c="data/config.json" -n="data/tokens.db" -l="data/log" -s="data/serverFiles/backupStorage" -x="data/serverFiles/exports" -r="data/serverFiles/unexports" -a="data/serverFiles/cache"`
 
 # Todo
 - Make interactive auth for google drive work on web
+- Improve interactive auth for google drive on CLI: it auto continues for listing, but must be restarted for uploading
 - Support database dumping on remotes, not just localhost
-- Transition some things from shell commands to API calls to reduce runtime environmental dependencies and make it less linux-centric
+- Transition more things from shell commands to API calls to reduce runtime environmental dependencies and make it less linux-centric
 - Add an optional encryption step to the export
 - better rsync error handling, ignore routine errors
 - Create client apps for data transfer using rsync library instead of relying on rsync daemon especially for android and windows
 - Support specifying multiple hostnames/IPs for one source as fallbacks, for example, when a client might be connected with any one of multiple network interfaces
 - Finish setting up client2 and client3 in Docker config for testing
+- Add support for sftp upload of exports
+- In dropbox_sdk when it checks if a file already exists, and finds that it doesn't (which is good) it gets a 409 back from the API and logs this as an error. The operation is successful so this seems like a spurious error.
