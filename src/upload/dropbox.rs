@@ -6,12 +6,39 @@ use crate::settings::app_settings::Settings;
 use crate::upload::list_files;
 use crate::tokens::{get_token, save_token};
 
+/**
+ * This is necessary because we need to save the PKCE code (string) for reuse by later invocations of the program
+ * in order to support the feature where the auth token is entered later,
+ * but the dropbox SDK has chosen to wrap it in a single field struct where the code is private,
+ * there aren't any setters or getters, and it can't be constructed with a provided value,
+ * so we can't get the code out (or back in) by any safe means.
+ * The implication of the unsafety is that whenever we version bump the dependency on dropbox-sdk we need to make sure 
+ * the data inside PkceCodePub and PkceCode still match exactly.
+ */
+pub struct PkceCodePub
+{
+    pub code: String
+}
+
+impl From<PkceCode> for PkceCodePub {
+    fn from(item: PkceCode) -> Self
+    {
+        unsafe{std::mem::transmute::<PkceCode, PkceCodePub>(item)}
+    }
+}
+
+impl Into<PkceCode> for PkceCodePub {
+    fn into(self) -> PkceCode {
+        unsafe{std::mem::transmute::<PkceCodePub, PkceCode>(self)}
+    }
+}
+
+
 pub fn dropbox_auth(settings: &Settings)
 {
-    
     let tokens_file = &settings.startup.tokens_file;
     let app_key = &settings.dropbox.app_key;
-    let input_oauth_token = &settings.dropbox.oauth_token;
+    let config_oauth_token = settings.dropbox.oauth_token.trim().to_string();
 
     /* dropbox documentation says these are the same thing,
        so we explicity set it here to avoid mixing up the terminology throughout the code
@@ -19,32 +46,64 @@ pub fn dropbox_auth(settings: &Settings)
     */
     let client_id = app_key;
 
-    let mut auth_code = String::new();
-    let flow_type = Oauth2Type::PKCE(PkceCode::new());
-    if input_oauth_token.is_empty()
+    let mut interactive_oauth_token = String::new();
+    
+    let pkce_code_token_name = "dropbox_PKCE_code";
+    let retrieved_pkce_code = match get_token(tokens_file, pkce_code_token_name)
+    {
+        Ok(file_code) => {
+            if file_code.is_empty() {
+                info!("Looks like we've never generated a PKCE code. Doing that now.");
+                None
+            }else{
+                Some(file_code)
+            }
+        },
+        Err(e) => {
+            error!("Error getting PKCE code from token store. Generating a new one. This is fine for a new auth, but it won't work for resuming a previous auth. Error: {e}");
+            None
+        }
+    };
+    let pkce_code = match retrieved_pkce_code
+    {
+        Some(c) => PkceCodePub{code: c}.into(),
+        None => {
+            let new_code = PkceCode::new();
+            let pk_pub = PkceCodePub::from(new_code.clone());
+            
+            save_token(tokens_file, pkce_code_token_name, &pk_pub.code).unwrap();
+            new_code
+        }
+    };
+    let flow_type = Oauth2Type::PKCE(pkce_code);
+
+    let auth_code = if config_oauth_token.is_empty()
     {
         info!("Performing dropbox interactive auth");
         let auth_url = oauth2::AuthorizeUrlBuilder::new(client_id, &flow_type).build();
         println!("To authorize dropbox, go to the following URL to get a token.\n{auth_url}\nEnter the token in one of two ways:\n1. Type in the token now\n2. Press enter to cancel, then run this action later while passing the token using the option --dropbox_oauth_token");
-        match std::io::stdin().read_line(&mut auth_code)
+        match std::io::stdin().read_line(&mut interactive_oauth_token)
         {
             Ok(_) => {
-                if auth_code.is_empty() { println!("Empty input, Skipping dropbox auth"); return; }
-                auth_code = auth_code.trim().to_string();
+                interactive_oauth_token = interactive_oauth_token.trim().to_string();
+                if interactive_oauth_token.is_empty() { println!("Empty input, Skipping dropbox auth"); return; }
             },
             Err(e) => { error!("Canceling dropbox auth: failed to read input token from stdin: {}", e); return; }
         }
+        interactive_oauth_token
     }else{
         info!("Resuming dropbox auth with entered code");
-        auth_code = input_oauth_token.to_string();
-    }
+        config_oauth_token
+    };
 
     let mut auth = Authorization::from_auth_code(client_id.to_string(), flow_type, auth_code.clone(), None);
     
     let client = NoauthDefaultClient::default();
     match auth.obtain_access_token(client)
     {
-        Err(e) => {error!("Dropbox authorization failed. Code: {} -- Error: {}", auth_code, e);}
+        Err(e) => {
+            error!("Dropbox authorization failed. Code: {} -- Error: {}", auth_code, e);
+        },
         Ok(_) => {
             info!("Dropbox auth succeeded.");
             if let Some(state) = auth.save()
@@ -66,7 +125,12 @@ pub fn dropbox_up(source_name: &str, settings: &Settings)
 {
     info!("Starting dropbox upload of exports for source: {}", source_name);
 
-    let dest = &settings.dropbox.dest_path;
+    let dest: String = if settings.dropbox.dest_path.as_bytes()[0] == b'/'
+    {
+        settings.dropbox.dest_path.clone()
+    }else{
+        ["/", &settings.dropbox.dest_path].concat()
+    };
     let tokens_file = &settings.startup.tokens_file;
     let app_key = &settings.dropbox.app_key;
 
