@@ -20,19 +20,21 @@ pub struct PkceCodePub
     pub code: String
 }
 
-impl From<PkceCode> for PkceCodePub {
+impl From<PkceCode> for PkceCodePub
+{
     fn from(item: PkceCode) -> Self
     {
         unsafe{std::mem::transmute::<PkceCode, PkceCodePub>(item)}
     }
 }
 
-impl Into<PkceCode> for PkceCodePub {
-    fn into(self) -> PkceCode {
-        unsafe{std::mem::transmute::<PkceCodePub, PkceCode>(self)}
+impl From<PkceCodePub> for PkceCode
+{
+    fn from(item: PkceCodePub) -> Self
+    {
+        unsafe{std::mem::transmute::<PkceCodePub, PkceCode>(item)}
     }
 }
-
 
 pub fn dropbox_auth(settings: &Settings)
 {
@@ -201,13 +203,17 @@ pub fn dropbox_up(source_name: &str, settings: &Settings)
             PathNormalizationResult::Err(e) => { error!("Failed to normalize destination path: {}", e); continue; }
         };
 
-        let mut backoff = calculate_backoff_series(0.5, 1.5, 10, 60.0, 600.0, 0.5);
-        backoff.push(0.0);
+        let mut backoff = vec!(0.0);
+        backoff.append(&mut calculate_backoff_series(0.5, 1.5, 10, 60.0, 600.0, 0.5));
         let mut resume: Option<Resume> = None;
         let mut success = false;
         let mut retry_count = 0;
         while retry_count < backoff.len()
         {
+            let time = backoff[retry_count];
+            info!("Waiting for {}", time);
+            sleep(Duration::from_secs_f32(time));
+
             let source_file = match File::open(source_path)
             {
                 Ok(f) => f,
@@ -248,9 +254,6 @@ pub fn dropbox_up(source_name: &str, settings: &Settings)
                     }
                 }
             }
-            let time = backoff[retry_count];
-            info!("Waiting for {}", time);
-            sleep(Duration::from_secs_f32(time));
         }
         if !success
         {
@@ -604,8 +607,9 @@ fn upload_file(
     //eprintln!("committing...");
     let finish = session.commit_arg(dest_path, source_mtime);
 
-    let mut retry = 0;
-    while retry < 3 {
+    let mut backoff = calculate_backoff_series(0.5, 1.5, 10, 60.0, 600.0, 0.5);
+    backoff.push(0.0);
+    for time in backoff {
         match files::upload_session_finish(client.as_ref(), &finish, &[]) {
             Ok(Ok(_file_metadata)) => {
                 //println!("Upload succeeded!");
@@ -614,8 +618,8 @@ fn upload_file(
             }
             error => {
                 warn!("Error finishing upload (retrying): {:?}", error);
-                retry += 1;
-                sleep(Duration::from_secs(1));
+                warn!("waiting for {time}s");
+                sleep(Duration::from_secs_f32(time));
             }
         }
     }
@@ -635,8 +639,19 @@ fn upload_block_with_retry(
     resume: Option<&Resume>,
 ) -> Result<(), String> {
     let block_start_time = Instant::now();
-    let mut errors = 0;
-    loop {
+
+    /* If we get a rate limit message, wait the amount of time they tell us before retrying
+       On any other errors, implement our own retry and backoff logic
+    */
+    let mut backoff = calculate_backoff_series(0.5, 1.5, 10, 60.0, 600.0, 0.5);
+    backoff.push(0.0);
+    let mut rate_limit_retries = 0;
+    let max_rate_limits = 4;
+    let mut other_error_retries = 0;
+    let max_other_errors = backoff.len();
+
+    while rate_limit_retries < max_rate_limits && other_error_retries < max_other_errors
+    {
         match files::upload_session_append_v2(client, arg, buf) {
             Ok(Ok(())) => { break; }
             Err(dropbox_sdk::Error::RateLimited { reason, retry_after_seconds }) => {
@@ -644,17 +659,24 @@ fn upload_block_with_retry(
                 if retry_after_seconds > 0 {
                     sleep(Duration::from_secs(u64::from(retry_after_seconds)));
                 }
+                rate_limit_retries += 1;
             }
             error => {
-                errors += 1;
-                let msg = format!("Error calling upload_session_append: {error:?}");
-                if errors == 3 {
-                    return Err(msg);
-                } else {
-                    eprintln!("{msg}; retrying...");
-                }
+                warn!("Error calling upload_session_append: {error:?}");
+                let wait_time = backoff[other_error_retries];
+                warn!("waiting for {wait_time}s");
+                sleep(Duration::from_secs_f32(wait_time));
+                other_error_retries += 1;
             }
         }
+    }
+    if rate_limit_retries >= max_rate_limits
+    {
+        return Err("Dropbox sent too many consecutive rate limit errors even though we thought we were waiting the right amount of time".to_string());
+    }
+    if other_error_retries >= max_other_errors
+    {
+        return Err("Max retries exceeded".to_string());
     }
 
     let now = Instant::now();
