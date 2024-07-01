@@ -47,5 +47,4 @@ set VCPKGRS_DYNAMIC=1
 - Finish setting up client2 and client3 in Docker config for testing
 - Add support for sftp upload of exports
 - Send some issues upstream to dropbox_sdk:
-  - When it checks if a file already exists, and finds that it doesn't (which is good) it gets a 409 back from the API and logs this as an error. The operation is successful so this seems like a spurious error.
   - Ask for PkceCode.code to be made pub so we don't have to use unsafe rust just to serialize it

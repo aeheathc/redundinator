@@ -321,10 +321,21 @@ impl PathNormalizationResult
     pub fn from_path(client: &UserAuthDefaultClient, dest_path: &str, source_filename: &str, source_file_size: &u64) -> PathNormalizationResult
     {
         // Ask the API about our proposed destination path.
-        let meta_result = match files::get_metadata(client, &files::GetMetadataArg::new(dest_path.to_owned()))
-        {
-            Ok(r) => r,
-            Err(e)=> { return PathNormalizationResult::Err(format!("Request error while looking up destination: {e}"));}
+        let mut backoff = vec!(0.0);
+        backoff.append(&mut calculate_backoff_series(0.5, 1.5, 6, 30.0, 60.0, 0.5));
+        let mut backoff_index = 0;
+        let meta_result = loop{
+            match files::get_metadata(client, &files::GetMetadataArg::new(dest_path.to_owned()))
+            {
+                Ok(r) => {break r;},
+                Err(e)=> {
+                    backoff_index += 1;
+                    if backoff_index >= backoff.len() {return PathNormalizationResult::Err(format!("Retries exceeded while looking up destination. Last error: {e}"));}
+                    let time = backoff[backoff_index];
+                    info!("Waiting for {}", time);
+                    sleep(Duration::from_secs_f32(time));
+                }
+            };
         };
 
         match meta_result {
