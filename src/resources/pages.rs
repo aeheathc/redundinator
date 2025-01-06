@@ -59,10 +59,10 @@ pub async fn index(settings: web::Data<Settings>) -> HttpResponse
     };
     let action_queue_block = fieldset("Action Queue", &serde_to_string(action_queue), true);
 
-    let cmdo = vec!(
+    let cmdo = [
         "ps aux|grep redundinator",
         &format!("du -h --max-depth=1 {}/sources", settings.startup.storage_dir)
-    ).iter().map(|cmd| show_command(cmd)).collect::<Vec<String>>().join("");
+    ].iter().map(|cmd| show_command(cmd)).collect::<Vec<String>>().join("");
 
     let body = format!("{buttons_block}{config_block}{current_action_block}{action_queue_block}{cmdo}");
     let head = "";

@@ -1,7 +1,7 @@
 /target
 /data/log/*.log
 /data/dockerVolumes/*
-/data/config.json
+/data/*.json
 /data/tokens.db
 /data/serverFiles/*
 

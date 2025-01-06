@@ -14,6 +14,8 @@ use crate::tokens::{get_token, save_token};
  * so we can't get the code out (or back in) by any safe means.
  * The implication of the unsafety is that whenever we version bump the dependency on dropbox-sdk we need to make sure 
  * the data inside PkceCodePub and PkceCode still match exactly.
+ * UPDATE: They've accepted my PR to make the field public so this can all be simplified away once they make a release
+ * that includes the change, and we update our dependency to it.
  */
 pub struct PkceCodePub
 {

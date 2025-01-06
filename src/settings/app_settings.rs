@@ -4,9 +4,6 @@ use std::collections::HashMap;
 
 use crate::settings::settings_resolver::{ClapArgsType, SettingsType};
 
-/**
-The portion of the config needed immediately, before we can even do so much as display an error over HTTP.
-*/
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Startup
 {
@@ -85,16 +82,15 @@ pub struct Dropbox
 {
     pub dest_path: String,
     pub app_key: String,
-    //pub app_secret: String,
     pub oauth_token: String
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GDrive
 {
-    pub dest_path: String,
-    pub client_id: String,
-    pub client_secret: String
+    pub dir_id: String,
+    pub email: String,
+    pub service_account_key_file: String
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -149,14 +145,13 @@ impl Settings
             {
                 dest_path:    String::from("/Backup/redundinator"),
                 app_key:      String::from(""),
-                //app_secret:   String::from(""),
                 oauth_token:  String::from("")
             },
             gdrive: GDrive
             {
-                dest_path:     String::from("Backup/redundinator"),
-                client_id:     String::from(""),
-                client_secret: String::from("")
+                dir_id:                   String::from(""),
+                email:                    String::from(""),
+                service_account_key_file: String::from("")
             },
             sources: vec![
                 (String::from("localhost"),         Source{hostname: String::from("localhost"), paths: vec!(String::from("/home/")),        paths_exclude: Vec::new(), method: SyncMethod::RsyncLocal }),
@@ -192,33 +187,33 @@ impl SettingsType for Settings
 #[derive(Parser, Serialize)]
 #[command(author, version, about, long_about = None)]
 struct ClapArgs {
-    /** Config file -- will be created if it doesn't exist.                                                  Default: /etc/redundinator/config.json */ #[arg(short='c', long="config_file",          env="REDUNDINATOR_CONFIG_FILE"         )]  startup_config_file: Option<String>,
-    /** Tokens file -- will be created if it doesn't exist.                                                  Default: /etc/redundinator/tokens.db   */ #[arg(short='n', long="tokens_file",          env="REDUNDINATOR_TOKENS_FILE"         )]  startup_tokens_file: Option<String>,
-    /** Log directory -- will be created if it doesn't exist.                                                Default: /var/log/redundinator/        */ #[arg(short='l', long="log_dir",              env="REDUNDINATOR_LOG_DIR"             )]  startup_log_dir: Option<String>,
-    /** Local directory to store all the backed up data.                                                     Default: /var/redundinator/backups/    */ #[arg(short='s', long="storage_dir",          env="REDUNDINATOR_STORAGE_DIR"         )]  startup_storage_dir: Option<String>,
-    /** Local directory to store compressed exports ready for cloud upload.                                  Default: /tmp/redundinator/exports/    */ #[arg(short='x', long="export_dir",           env="REDUNDINATOR_EXPORT_DIR"          )]  startup_export_dir: Option<String>,
-    /** Local directory for files extracted from exports.                                                    Default: /tmp/redundinator/unexports/  */ #[arg(short='r', long="unexport_dir",         env="REDUNDINATOR_UNEXPORT_DIR"        )]  startup_unexport_dir: Option<String>,
-    /** Local directory where the app should cache data such as oauth access tokens to your cloud storage.   Default: /var/redundinator/cache/      */ #[arg(short='a', long="cache_dir",            env="REDUNDINATOR_CACHE_DIR"           )]  startup_cache_dir: Option<String>,
-    /** ip:port for the web interface to listen on. Use 0.0.0.0 for the ip to listen on all interfaces.      Default: 0.0.0.0:80                    */ #[arg(short='w', long="listen_addr",          env="REDUNDINATOR_LISTEN_ADDR"         )]  startup_listen_addr: Option<String>,
-    /** Username for mysqldump on localhost.                                                                                                        */ #[arg(short='u', long="mysqldump_username",   env="REDUNDINATOR_MYSQLDUMP_USERNAME"  )]  mysql_mysqldump_username: Option<String>,
-    /** Password for mysqldump on localhost.                                                                                                        */ #[arg(short='p', long="mysqldump_password",   env="REDUNDINATOR_MYSQLDUMP_PASSWORD"  )]  mysql_mysqldump_password: Option<String>,
-    /** Dropbox API App Key                                                                                                                         */ #[arg(short='k', long="dropbox_app_key",      env="REDUNDINATOR_DROPBOX_APP_KEY"     )]  dropbox_app_key: Option<String>,
-    
-    /** Token retrieved from Dropbox during interactive auth. If provided while using auth_dropbox, resumes auth instead of generating new URL.     */ #[arg(short='d', long="dropbox_oauth_token",  env="REDUNDINATOR_DROPBOX_OAUTH_TOKEN" )]  dropbox_oauth_token: Option<String>,
-    /** Directory in your dropbox account where exports should be stored.                                    Default: /Backup/redundinator          */ #[arg(short='b', long="dropbox_dest_path",    env="REDUNDINATOR_DROPBOX_DEST_PATH"   )]  dropbox_dest_path: Option<String>,
-    /** Directory in your google drive account where exports should be stored.                               Default: Backup/redundinator           */ #[arg(short='t', long="gdrive_dest_path",     env="REDUNDINATOR_GDRIVE_DEST_PATH"    )]  gdrive_dest_path: Option<String>,
-    /** Google Drive API Client ID                                                                                                                  */ #[arg(short='i', long="gdrive_client_id",     env="REDUNDINATOR_GDRIVE_CLIENT_ID"    )]  gdrive_client_id: Option<String>,
-    /** Google Drive API Client Secret                                                                                                              */ #[arg(short='e', long="gdrive_client_secret", env="REDUNDINATOR_GDRIVE_CLIENT_SECRET")]  gdrive_client_secret: Option<String>,
-    /** Sync files from source host to backup storage directory.                                                                                    */ #[arg(short='S', long="sync",                 env="REDUNDINATOR_SYNC"                )]  action_sync: bool,
-    /** Export contents of backup storage directory to export directory, processed with tar+zstd|split                                              */ #[arg(short='E', long="export",               env="REDUNDINATOR_EXPORT"              )]  action_export: bool,
-    /** Extract original files from an export.                                                                                                      */ #[arg(short='U', long="unexport",             env="REDUNDINATOR_UNEXPORT"            )]  action_unexport: bool,
-    /** Upload exports to Dropbox.                                                                                                                  */ #[arg(short='D', long="upload_dropbox",       env="REDUNDINATOR_UPLOAD_DROPBOX"      )]  action_upload_dropbox: bool,
-    /** Perform interactive authorization to Dropbox -- must do this before uploading to dropbox will work.                                         */ #[arg(short='R', long="auth_dropbox",         env="REDUNDINATOR_AUTH_DROPBOX"        )]  action_auth_dropbox: bool,
-    /** Upload exports to Google Drive.                                                                                                             */ #[arg(short='G', long="upload_gdrive",        env="REDUNDINATOR_UPLOAD_GDRIVE"       )]  action_upload_gdrive: bool,
-    /** Dump localhost mysql contents to flat file and include in the backup storage directory                                                      */ #[arg(short='M', long="mysql_dump",           env="REDUNDINATOR_MYSQL_DUMP"          )]  action_mysql_dump: bool,
-    /** Only do actions for the named data source. When blank, use all.                                                                             */ #[arg(short='A', long="active_source",        env="REDUNDINATOR_ACTIVE_SOURCE"       )]  action_source: Option<String>,
+    /** Config file -- will be created if it doesn't exist.                                                  Default: /etc/redundinator/config.json */ #[arg(short='c', long="config_file",           env="REDUNDINATOR_CONFIG_FILE"           )]  startup_config_file: Option<String>,
+    /** Tokens file -- will be created if it doesn't exist.                                                  Default: /etc/redundinator/tokens.db   */ #[arg(short='n', long="tokens_file",           env="REDUNDINATOR_TOKENS_FILE"           )]  startup_tokens_file: Option<String>,
+    /** Log directory -- will be created if it doesn't exist.                                                Default: /var/log/redundinator/        */ #[arg(short='l', long="log_dir",               env="REDUNDINATOR_LOG_DIR"               )]  startup_log_dir: Option<String>,
+    /** Local directory to store all the backed up data.                                                     Default: /var/redundinator/backups/    */ #[arg(short='s', long="storage_dir",           env="REDUNDINATOR_STORAGE_DIR"           )]  startup_storage_dir: Option<String>,
+    /** Local directory to store compressed exports ready for cloud upload.                                  Default: /tmp/redundinator/exports/    */ #[arg(short='x', long="export_dir",            env="REDUNDINATOR_EXPORT_DIR"            )]  startup_export_dir: Option<String>,
+    /** Local directory for files extracted from exports.                                                    Default: /tmp/redundinator/unexports/  */ #[arg(short='r', long="unexport_dir",          env="REDUNDINATOR_UNEXPORT_DIR"          )]  startup_unexport_dir: Option<String>,
+    /** Local directory where the app should cache data such as oauth access tokens to your cloud storage.   Default: /var/redundinator/cache/      */ #[arg(short='a', long="cache_dir",             env="REDUNDINATOR_CACHE_DIR"             )]  startup_cache_dir: Option<String>,
+    /** ip:port for the web interface to listen on. Use 0.0.0.0 for the ip to listen on all interfaces.      Default: 0.0.0.0:80                    */ #[arg(short='w', long="listen_addr",           env="REDUNDINATOR_LISTEN_ADDR"           )]  startup_listen_addr: Option<String>,
+    /** Username for mysqldump on localhost.                                                                                                        */ #[arg(short='u', long="mysqldump_username",    env="REDUNDINATOR_MYSQLDUMP_USERNAME"    )]  mysql_mysqldump_username: Option<String>,
+    /** Password for mysqldump on localhost.                                                                                                        */ #[arg(short='p', long="mysqldump_password",    env="REDUNDINATOR_MYSQLDUMP_PASSWORD"    )]  mysql_mysqldump_password: Option<String>,
+
+    /** Dropbox API App Key                                                                                                                         */ #[arg(short='k', long="dropbox_app_key",       env="REDUNDINATOR_DROPBOX_APP_KEY"       )]  dropbox_app_key: Option<String>,
+    /** Token retrieved from Dropbox during interactive auth. If provided while using auth_dropbox, resumes auth instead of generating new URL.     */ #[arg(short='d', long="dropbox_oauth_token",   env="REDUNDINATOR_DROPBOX_OAUTH_TOKEN"   )]  dropbox_oauth_token: Option<String>,
+    /** Directory in your dropbox account where exports should be stored.                                    Default: /Backup/redundinator          */ #[arg(short='b', long="dropbox_dest_path",     env="REDUNDINATOR_DROPBOX_DEST_PATH"     )]  dropbox_dest_path: Option<String>,
+    /** ID of the directory in google drive to store exports.                                                                                       */ #[arg(short='i', long="gdrive_dir_id",         env="REDUNDINATOR_GDRIVE_DIR_ID"         )]  gdrive_dir_id: Option<String>,
+    /** Email address of the Google Workspaces user to impersonate using Domain-Wide Delegation in order to access the directory.                   */ #[arg(short='o', long="gdrive_email",          env="REDUNDINATOR_GDRIVE_EMAIL"          )]  gdrive_email: Option<String>,
+    /** Path to the Google Drive API Service Account Key File -- the JSON file you get when you create a new private key for a service account.     */ #[arg(short='e', long="gdrive_keyfile",        env="REDUNDINATOR_GDRIVE_KEYFILE"        )]  gdrive_service_account_key_file: Option<String>,
+
+    /** Sync files from source host to backup storage directory.                                                                                    */ #[arg(short='S', long="sync",                  env="REDUNDINATOR_SYNC"                  )]  action_sync: bool,
+    /** Export contents of backup storage directory to export directory, processed with tar+zstd|split                                              */ #[arg(short='E', long="export",                env="REDUNDINATOR_EXPORT"                )]  action_export: bool,
+    /** Extract original files from an export.                                                                                                      */ #[arg(short='U', long="unexport",              env="REDUNDINATOR_UNEXPORT"              )]  action_unexport: bool,
+    /** Upload exports to Dropbox.                                                                                                                  */ #[arg(short='D', long="upload_dropbox",        env="REDUNDINATOR_UPLOAD_DROPBOX"        )]  action_upload_dropbox: bool,
+    /** Perform interactive authorization to Dropbox -- must do this before uploading to dropbox will work.                                         */ #[arg(short='R', long="auth_dropbox",          env="REDUNDINATOR_AUTH_DROPBOX"          )]  action_auth_dropbox: bool,
+    /** Upload exports to Google Drive.                                                                                                             */ #[arg(short='G', long="upload_gdrive",         env="REDUNDINATOR_UPLOAD_GDRIVE"         )]  action_upload_gdrive: bool,
+    /** Dump localhost mysql contents to flat file and include in the backup storage directory                                                      */ #[arg(short='M', long="mysql_dump",            env="REDUNDINATOR_MYSQL_DUMP"            )]  action_mysql_dump: bool,
+    /** Only do actions for the named data source. When blank, use all.                                                                             */ #[arg(short='A', long="active_source",         env="REDUNDINATOR_ACTIVE_SOURCE"         )]  action_source: Option<String>,
 }
-// /** Dropbox API App Secret                                                                                                                      */ #[arg(short='o', long="dropbox_app_secret",   env="REDUNDINATOR_DROPBOX_APP_SECRET"  )]  dropbox_app_secret: Option<String>,
 
 impl ClapArgsType for ClapArgs
 {

@@ -20,7 +20,7 @@ pub fn export(source_name: &str, settings: &Settings)
         return;
     }
 
-    let cmd_export = format!(r#"tar --zstd -C {source} -cf - . | split -db 100G - "{dest}.tar.zst.""#);
+    let cmd_export = format!(r#"tar --zstd -C {source} -cf - . | split --numeric-suffixes --bytes=100G --suffix-length=4 - "{dest}.tar.zst.""#);
     info!(target: "cmdlog", "{}", cmd_export);
     match run_script::run(&cmd_export, &Vec::new(), &ScriptOptions::new())
     {

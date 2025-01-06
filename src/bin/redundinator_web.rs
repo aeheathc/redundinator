@@ -12,6 +12,10 @@ Result, but only when actix-web fails to bind to the port we want to use for HTT
 #[actix_rt::main]
 async fn main() -> std::io::Result<()>
 {
+    //this magic is needed because the google drive crate neglects to do it internally, connecting causes a panic otherwise
+    //it's here instead of in gdrive.rs to ensure it's only run once per process, running it a second time would also cause a panic
+    rustls::crypto::ring::default_provider().install_default().expect("Couldn't set default encryption for TLS");
+
     let settings = Settings::load();
     setup_logger(&settings);
 
